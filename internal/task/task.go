@@ -28,6 +28,7 @@ type RetryPolicy struct {
 type Task struct {
 	ID         string        `json:"id"`
 	Name       string        `json:"name"`
+	Priority   int           `json:"priority"`
 	Payload    []byte        `json:"payload,omitempty"`
 	Status     Status        `json:"status"`
 	Attempts   int           `json:"attempts"`

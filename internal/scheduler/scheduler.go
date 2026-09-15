@@ -108,6 +108,8 @@ func (s *Scheduler) Submit(t task.Task) error {
 
 func (s *Scheduler) Get(id string) (task.Task, error) { return s.store.Get(id) }
 
+func (s *Scheduler) List() ([]task.Task, error) { return s.store.List() }
+
 func (s *Scheduler) Cancel(id string) error {
 	t, err := s.store.Get(id)
 	if err != nil {
@@ -137,6 +139,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	for i := 0; i < s.workers; i++ {
 		_, _ = s.RegisterWorker(fmt.Sprintf("local-%d", i))
 	}
+	s.recoverRunning()
 	go s.loop(ctx)
 }
 
@@ -304,6 +307,26 @@ func (s *Scheduler) reapExpired() {
 		s.mu.Unlock()
 		t.Status, t.RunAt, t.WorkerID, t.LeaseUntil, t.LeaseToken = task.StatusRetrying, now, "", nil, ""
 		t.LastError = "worker lease expired"
+		_ = s.store.Update(t)
+	}
+}
+
+// recoverRunning converts in-flight tasks from a previous process into
+// retryable work. Lease tokens are intentionally process-local and therefore
+// cannot survive a restart.
+func (s *Scheduler) recoverRunning() {
+	items, err := s.store.List()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, t := range items {
+		if t.Status != task.StatusRunning {
+			continue
+		}
+		t.Status, t.RunAt = task.StatusRetrying, now
+		t.WorkerID, t.LeaseUntil, t.LeaseToken = "", nil, ""
+		t.LastError = "scheduler restarted while task was running"
 		_ = s.store.Update(t)
 	}
 }

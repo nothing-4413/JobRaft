@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -87,5 +88,11 @@ func Due(tasks []task.Task, now time.Time) []task.Task {
 			result = append(result, t)
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Priority != result[j].Priority {
+			return result[i].Priority > result[j].Priority
+		}
+		return result[i].RunAt.Before(result[j].RunAt)
+	})
 	return result
 }

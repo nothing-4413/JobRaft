@@ -20,7 +20,11 @@ curl -X POST http://localhost:8080/tasks \
   -d '{"name":"echo","payload":{"message":"hello"},"delay": 0, "retry":{"max_attempts":3}}'
 ```
 
-Inspect or cancel it with `GET /tasks/{id}` and `DELETE /tasks/{id}`.
+Inspect, list, or cancel tasks with `GET /tasks`, `GET /tasks/{id}`, and
+`DELETE /tasks/{id}`. Set a larger `priority` value to run eligible work first.
+
+Workers can be registered and kept alive with `POST /workers` and
+`POST /workers/{id}`; inspect them with `GET /workers`.
 
 ## State machine
 
@@ -32,3 +36,6 @@ handlers should be idempotent.
 The storage layer is an interface (`internal/store.Store`) so SQLite/PostgreSQL
 backends can be added without changing scheduler logic. The default binary uses
 the concurrency-safe in-memory implementation.
+
+When `JOBRAFT_STORE` points to a JSON file, tasks that were running when the
+process stopped are recovered as retryable work on the next startup.

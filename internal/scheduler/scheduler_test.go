@@ -61,3 +61,14 @@ func TestSchedulerTimeoutMarksFailure(t *testing.T) {
 	}
 	t.Fatal("timed out task was not marked failed")
 }
+
+func TestDueSortsByPriority(t *testing.T) {
+	now := time.Now()
+	items := store.Due([]task.Task{
+		{ID: "low", Name: "x", Priority: 1, Status: task.StatusPending, RunAt: now},
+		{ID: "high", Name: "x", Priority: 10, Status: task.StatusPending, RunAt: now},
+	}, now)
+	if len(items) != 2 || items[0].ID != "high" {
+		t.Fatalf("priority order incorrect: %+v", items)
+	}
+}

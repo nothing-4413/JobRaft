@@ -66,19 +66,29 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		items, err := s.scheduler.List()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+		return
+	}
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+		w.Header().Set("Allow", "GET, "+http.MethodPost)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
-		ID      string           `json:"id"`
-		Name    string           `json:"name"`
-		Payload json.RawMessage  `json:"payload"`
-		RunAt   *time.Time       `json:"run_at"`
-		Delay   time.Duration    `json:"delay"`
-		Timeout time.Duration    `json:"timeout"`
-		Retry   task.RetryPolicy `json:"retry"`
+		ID       string           `json:"id"`
+		Name     string           `json:"name"`
+		Priority int              `json:"priority"`
+		Payload  json.RawMessage  `json:"payload"`
+		RunAt    *time.Time       `json:"run_at"`
+		Delay    time.Duration    `json:"delay"`
+		Timeout  time.Duration    `json:"timeout"`
+		Retry    task.RetryPolicy `json:"retry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -90,7 +100,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	} else if req.Delay > 0 {
 		runAt = runAt.Add(req.Delay)
 	}
-	t := task.Task{ID: req.ID, Name: req.Name, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
+	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
