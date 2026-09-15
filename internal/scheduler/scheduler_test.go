@@ -136,3 +136,14 @@ func TestScheduledTaskRunsAgain(t *testing.T) {
 		t.Fatalf("expected recurring task to run twice, got %d", count)
 	}
 }
+
+func TestSchedulerBackpressure(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	s.SetMaxPending(1)
+	if err := s.Submit(task.Task{ID: "queued", Name: "noop", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Submit(task.Task{ID: "rejected", Name: "noop", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != ErrBackpressure {
+		t.Fatalf("expected backpressure, got %v", err)
+	}
+}

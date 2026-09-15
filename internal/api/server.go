@@ -140,6 +140,10 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
 	if err := s.scheduler.Submit(t); err != nil {
+		if err == scheduler.ErrBackpressure {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

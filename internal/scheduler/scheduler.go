@@ -16,6 +16,7 @@ import (
 type Handler func(context.Context, task.Task) error
 
 var ErrNoTask = errors.New("no task available")
+var ErrBackpressure = errors.New("scheduler queue is full")
 
 type Worker struct {
 	ID            string    `json:"id"`
@@ -38,6 +39,7 @@ type Scheduler struct {
 	running                                         map[string]context.CancelFunc
 	workersByID                                     map[string]Worker
 	leaseTTL                                        time.Duration
+	maxPending                                      int
 	submitted, succeeded, failed, retried, canceled uint64
 }
 
@@ -45,7 +47,13 @@ func New(s store.Store, workers int) *Scheduler {
 	if workers < 1 {
 		workers = 1
 	}
-	return &Scheduler{store: s, workers: workers, interval: 100 * time.Millisecond, handlers: make(map[string]Handler), queue: make(chan task.Task, workers*2), stop: make(chan struct{}), done: make(chan struct{}), running: make(map[string]context.CancelFunc), workersByID: make(map[string]Worker), leaseTTL: 30 * time.Second}
+	return &Scheduler{store: s, workers: workers, interval: 100 * time.Millisecond, handlers: make(map[string]Handler), queue: make(chan task.Task, workers*2), stop: make(chan struct{}), done: make(chan struct{}), running: make(map[string]context.CancelFunc), workersByID: make(map[string]Worker), leaseTTL: 30 * time.Second, maxPending: workers * 100}
+}
+
+func (s *Scheduler) SetMaxPending(limit int) {
+	if limit > 0 {
+		s.maxPending = limit
+	}
 }
 
 func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
@@ -102,6 +110,21 @@ func (s *Scheduler) Register(name string, h Handler) error {
 }
 
 func (s *Scheduler) Submit(t task.Task) error {
+	if s.maxPending > 0 {
+		items, err := s.store.List()
+		if err != nil {
+			return err
+		}
+		inFlight := 0
+		for _, item := range items {
+			if item.Status == task.StatusPending || item.Status == task.StatusRetrying || item.Status == task.StatusRunning {
+				inFlight++
+			}
+		}
+		if inFlight >= s.maxPending {
+			return ErrBackpressure
+		}
+	}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
