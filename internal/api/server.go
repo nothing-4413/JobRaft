@@ -21,7 +21,47 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/tasks", s.tasks)
 	mux.HandleFunc("/tasks/", s.taskByID)
+	mux.HandleFunc("/workers", s.workers)
+	mux.HandleFunc("/workers/", s.workerHeartbeat)
 	return mux
+}
+
+func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, s.scheduler.Workers())
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	wkr, err := s.scheduler.RegisterWorker(req.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, wkr)
+}
+
+func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/workers/")
+	wkr, err := s.scheduler.Heartbeat(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, wkr)
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {

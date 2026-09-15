@@ -14,24 +14,67 @@ import (
 // Handler executes a task payload. Returning an error makes the task retryable.
 type Handler func(context.Context, task.Task) error
 
+type Worker struct {
+	ID            string    `json:"id"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	LeaseUntil    time.Time `json:"lease_until"`
+}
+
 type Scheduler struct {
-	store    store.Store
-	workers  int
-	interval time.Duration
-	handlers map[string]Handler
-	queue    chan task.Task
-	stop     chan struct{}
-	done     chan struct{}
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	running  map[string]context.CancelFunc
+	store       store.Store
+	workers     int
+	interval    time.Duration
+	handlers    map[string]Handler
+	queue       chan task.Task
+	stop        chan struct{}
+	done        chan struct{}
+	cancel      context.CancelFunc
+	mu          sync.Mutex
+	running     map[string]context.CancelFunc
+	workersByID map[string]Worker
+	leaseTTL    time.Duration
 }
 
 func New(s store.Store, workers int) *Scheduler {
 	if workers < 1 {
 		workers = 1
 	}
-	return &Scheduler{store: s, workers: workers, interval: 100 * time.Millisecond, handlers: make(map[string]Handler), queue: make(chan task.Task, workers*2), stop: make(chan struct{}), done: make(chan struct{}), running: make(map[string]context.CancelFunc)}
+	return &Scheduler{store: s, workers: workers, interval: 100 * time.Millisecond, handlers: make(map[string]Handler), queue: make(chan task.Task, workers*2), stop: make(chan struct{}), done: make(chan struct{}), running: make(map[string]context.CancelFunc), workersByID: make(map[string]Worker), leaseTTL: 30 * time.Second}
+}
+
+func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
+	if id == "" {
+		return Worker{}, errors.New("worker id is required")
+	}
+	now := time.Now()
+	w := Worker{ID: id, LastHeartbeat: now, LeaseUntil: now.Add(s.leaseTTL)}
+	s.mu.Lock()
+	s.workersByID[id] = w
+	s.mu.Unlock()
+	return w, nil
+}
+
+func (s *Scheduler) Heartbeat(id string) (Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.workersByID[id]
+	if !ok {
+		return Worker{}, errors.New("worker not registered")
+	}
+	now := time.Now()
+	w.LastHeartbeat, w.LeaseUntil = now, now.Add(s.leaseTTL)
+	s.workersByID[id] = w
+	return w, nil
+}
+
+func (s *Scheduler) Workers() []Worker {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]Worker, 0, len(s.workersByID))
+	for _, w := range s.workersByID {
+		result = append(result, w)
+	}
+	return result
 }
 
 func (s *Scheduler) Register(name string, h Handler) error {
@@ -91,6 +134,9 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
+	for i := 0; i < s.workers; i++ {
+		_, _ = s.RegisterWorker(fmt.Sprintf("local-%d", i))
+	}
 	go s.loop(ctx)
 }
 
@@ -112,17 +158,24 @@ func (s *Scheduler) loop(ctx context.Context) {
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
+	heartbeatTicker := time.NewTicker(s.leaseTTL / 3)
+	defer heartbeatTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.dispatch()
+		case <-heartbeatTicker.C:
+			for i := 0; i < s.workers; i++ {
+				_, _ = s.Heartbeat(fmt.Sprintf("local-%d", i))
+			}
 		}
 	}
 }
 
 func (s *Scheduler) dispatch() {
+	s.reapExpired()
 	items, err := s.store.List()
 	if err != nil {
 		return
@@ -142,6 +195,9 @@ func (s *Scheduler) dispatch() {
 		t.Status = task.StatusRunning
 		t.Attempts++
 		t.StartedAt = &now
+		t.LeaseUntil = timePtr(now.Add(s.leaseTTL))
+		t.LeaseToken = fmt.Sprintf("%d-%s", now.UnixNano(), t.ID)
+		t.WorkerID = s.pickWorker()
 		if s.store.Update(t) == nil {
 			select {
 			case s.queue <- t:
@@ -171,7 +227,7 @@ func (s *Scheduler) worker(parent context.Context) {
 
 func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	current, err := s.store.Get(t.ID)
-	if err != nil || current.Status == task.StatusCanceled {
+	if err != nil || current.Status != task.StatusRunning || current.LeaseToken != t.LeaseToken {
 		return
 	}
 	s.mu.Lock()
@@ -195,11 +251,14 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 		err = ctx.Err()
 	}
 	current, getErr := s.store.Get(t.ID)
-	if getErr != nil || current.Status == task.StatusCanceled {
+	if getErr != nil || current.Status != task.StatusRunning || current.LeaseToken != t.LeaseToken {
 		return
 	}
 	now := time.Now()
 	current.FinishedAt = &now
+	current.LeaseUntil = nil
+	current.WorkerID = ""
+	current.LeaseToken = ""
 	if err == nil {
 		current.Status, current.LastError = task.StatusSuccess, ""
 	} else if current.Attempts < current.Retry.MaxAttempts {
@@ -212,3 +271,41 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	}
 	_ = s.store.Update(current)
 }
+
+func (s *Scheduler) pickWorker() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for id, w := range s.workersByID {
+		if w.LeaseUntil.After(now) {
+			return id
+		}
+	}
+	return ""
+}
+
+func (s *Scheduler) reapExpired() {
+	items, err := s.store.List()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, t := range items {
+		if t.Status != task.StatusRunning || t.LeaseUntil == nil || t.LeaseUntil.After(now) {
+			continue
+		}
+		if t.IsTerminal() {
+			continue
+		}
+		s.mu.Lock()
+		if cancel, ok := s.running[t.ID]; ok && cancel != nil {
+			cancel()
+		}
+		s.mu.Unlock()
+		t.Status, t.RunAt, t.WorkerID, t.LeaseUntil, t.LeaseToken = task.StatusRetrying, now, "", nil, ""
+		t.LastError = "worker lease expired"
+		_ = s.store.Update(t)
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }

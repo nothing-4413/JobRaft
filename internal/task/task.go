@@ -38,6 +38,9 @@ type Task struct {
 	CreatedAt  time.Time     `json:"created_at"`
 	StartedAt  *time.Time    `json:"started_at,omitempty"`
 	FinishedAt *time.Time    `json:"finished_at,omitempty"`
+	WorkerID   string        `json:"worker_id,omitempty"`
+	LeaseUntil *time.Time    `json:"lease_until,omitempty"`
+	LeaseToken string        `json:"-"`
 }
 
 var (
