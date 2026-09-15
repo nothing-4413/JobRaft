@@ -15,6 +15,8 @@ import (
 // Handler executes a task payload. Returning an error makes the task retryable.
 type Handler func(context.Context, task.Task) error
 
+var ErrNoTask = errors.New("no task available")
+
 type Worker struct {
 	ID            string    `json:"id"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
@@ -68,6 +70,14 @@ func (s *Scheduler) Heartbeat(id string) (Worker, error) {
 	now := time.Now()
 	w.LastHeartbeat, w.LeaseUntil = now, now.Add(s.leaseTTL)
 	s.workersByID[id] = w
+	// Renew leases for tasks owned by this worker as part of its heartbeat.
+	items, _ := s.store.List()
+	for _, t := range items {
+		if t.Status == task.StatusRunning && t.WorkerID == id {
+			t.LeaseUntil = timePtr(w.LeaseUntil)
+			_ = s.store.Update(t)
+		}
+	}
 	return w, nil
 }
 
@@ -125,6 +135,76 @@ func (s *Scheduler) List() ([]task.Task, error) { return s.store.List() }
 
 func (s *Scheduler) Metrics() Metrics {
 	return Metrics{Submitted: atomic.LoadUint64(&s.submitted), Succeeded: atomic.LoadUint64(&s.succeeded), Failed: atomic.LoadUint64(&s.failed), Retried: atomic.LoadUint64(&s.retried), Canceled: atomic.LoadUint64(&s.canceled)}
+}
+
+// Claim reserves one eligible task for an external worker. The returned lease
+// token must be supplied to CompleteTask.
+func (s *Scheduler) Claim(workerID string) (task.Task, error) {
+	if !s.workerHealthy(workerID) {
+		return task.Task{}, errors.New("worker is not registered or lease expired")
+	}
+	items, err := s.store.List()
+	if err != nil {
+		return task.Task{}, err
+	}
+	for _, t := range store.Due(items, time.Now()) {
+		ready, dependencyErr := s.dependenciesReady(t)
+		if dependencyErr != "" {
+			now := time.Now()
+			t.Status, t.LastError, t.FinishedAt = task.StatusFailed, dependencyErr, &now
+			_ = s.store.Update(t)
+			continue
+		}
+		if !ready {
+			continue
+		}
+		s.mu.Lock()
+		_, already := s.running[t.ID]
+		if already {
+			s.mu.Unlock()
+			continue
+		}
+		s.running[t.ID] = nil
+		s.mu.Unlock()
+		now := time.Now()
+		t.Status, t.Attempts, t.StartedAt = task.StatusRunning, t.Attempts+1, &now
+		t.WorkerID, t.LeaseUntil, t.LeaseToken = workerID, timePtr(now.Add(s.leaseTTL)), fmt.Sprintf("%d-%s", now.UnixNano(), t.ID)
+		if err := s.store.Update(t); err != nil {
+			s.mu.Lock()
+			delete(s.running, t.ID)
+			s.mu.Unlock()
+			return task.Task{}, err
+		}
+		return t, nil
+	}
+	return task.Task{}, ErrNoTask
+}
+
+func (s *Scheduler) CompleteTask(workerID, id, token, failure string) error {
+	t, err := s.store.Get(id)
+	if err != nil {
+		return err
+	}
+	if t.Status != task.StatusRunning || t.WorkerID != workerID || t.LeaseToken != token {
+		return errors.New("invalid task lease")
+	}
+	if failure != "" {
+		err = errors.New(failure)
+	} else {
+		err = nil
+	}
+	s.finish(t, err)
+	s.mu.Lock()
+	delete(s.running, id)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Scheduler) workerHealthy(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.workersByID[id]
+	return ok && w.LeaseUntil.After(time.Now())
 }
 
 func (s *Scheduler) Cancel(id string) error {
@@ -304,11 +384,13 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	if getErr != nil || current.Status != task.StatusRunning || current.LeaseToken != t.LeaseToken {
 		return
 	}
+	s.finish(current, err)
+}
+
+func (s *Scheduler) finish(current task.Task, err error) {
 	now := time.Now()
 	current.FinishedAt = &now
-	current.LeaseUntil = nil
-	current.WorkerID = ""
-	current.LeaseToken = ""
+	current.LeaseUntil, current.WorkerID, current.LeaseToken = nil, "", ""
 	if err == nil {
 		current.Status, current.LastError = task.StatusSuccess, ""
 		atomic.AddUint64(&s.succeeded, 1)

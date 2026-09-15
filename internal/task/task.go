@@ -42,7 +42,7 @@ type Task struct {
 	FinishedAt *time.Time    `json:"finished_at,omitempty"`
 	WorkerID   string        `json:"worker_id,omitempty"`
 	LeaseUntil *time.Time    `json:"lease_until,omitempty"`
-	LeaseToken string        `json:"-"`
+	LeaseToken string        `json:"lease_token,omitempty"`
 }
 
 var (

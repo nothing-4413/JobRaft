@@ -63,6 +63,10 @@ func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/claim") {
+		s.workerClaim(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -74,6 +78,24 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, wkr)
+}
+
+func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/workers/"), "/claim")
+	t, err := s.scheduler.Claim(path)
+	if err == scheduler.ErrNoTask {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +155,23 @@ func (s *Server) taskByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		if err := s.scheduler.Cancel(id); err != nil {
 			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Query().Get("complete") == "true" {
+		var req struct {
+			WorkerID   string `json:"worker_id"`
+			LeaseToken string `json:"lease_token"`
+			Error      string `json:"error"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.scheduler.CompleteTask(req.WorkerID, id, req.LeaseToken, req.Error); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

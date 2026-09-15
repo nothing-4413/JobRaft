@@ -93,3 +93,28 @@ func TestSchedulerHonorsDependencies(t *testing.T) {
 		t.Fatalf("dependency order incorrect: %v", order)
 	}
 }
+
+func TestExternalWorkerClaimAndComplete(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	if err := s.Submit(task.Task{ID: "remote-1", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := s.RegisterWorker("remote-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Status != task.StatusRunning || claimed.WorkerID != worker.ID || claimed.LeaseToken == "" {
+		t.Fatalf("invalid claim: %+v", claimed)
+	}
+	if err := s.CompleteTask(worker.ID, claimed.ID, claimed.LeaseToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(claimed.ID)
+	if got.Status != task.StatusSuccess {
+		t.Fatalf("expected success, got %s", got.Status)
+	}
+}
