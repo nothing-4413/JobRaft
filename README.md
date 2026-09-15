@@ -28,6 +28,7 @@ canceled.
 
 Workers can be registered and kept alive with `POST /workers` and
 `POST /workers/{id}`; inspect them with `GET /workers`.
+Prometheus-compatible counters are available from `GET /metrics`.
 
 ## State machine
 

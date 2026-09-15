@@ -20,11 +20,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("/metrics", s.metrics)
 	mux.HandleFunc("/tasks", s.tasks)
 	mux.HandleFunc("/tasks/", s.taskByID)
 	mux.HandleFunc("/workers", s.workers)
 	mux.HandleFunc("/workers/", s.workerHeartbeat)
 	return mux
+}
+
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	m := s.scheduler.Metrics()
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	_, _ = fmt.Fprintf(w, "jobraft_tasks_submitted_total %d\njobraft_tasks_succeeded_total %d\njobraft_tasks_failed_total %d\njobraft_tasks_retried_total %d\njobraft_tasks_canceled_total %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled)
 }
 
 func (s *Server) workers(w http.ResponseWriter, r *http.Request) {

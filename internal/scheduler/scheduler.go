@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nothing-4413/JobRaft/internal/store"
@@ -20,19 +21,22 @@ type Worker struct {
 	LeaseUntil    time.Time `json:"lease_until"`
 }
 
+type Metrics struct{ Submitted, Succeeded, Failed, Retried, Canceled uint64 }
+
 type Scheduler struct {
-	store       store.Store
-	workers     int
-	interval    time.Duration
-	handlers    map[string]Handler
-	queue       chan task.Task
-	stop        chan struct{}
-	done        chan struct{}
-	cancel      context.CancelFunc
-	mu          sync.Mutex
-	running     map[string]context.CancelFunc
-	workersByID map[string]Worker
-	leaseTTL    time.Duration
+	store                                           store.Store
+	workers                                         int
+	interval                                        time.Duration
+	handlers                                        map[string]Handler
+	queue                                           chan task.Task
+	stop                                            chan struct{}
+	done                                            chan struct{}
+	cancel                                          context.CancelFunc
+	mu                                              sync.Mutex
+	running                                         map[string]context.CancelFunc
+	workersByID                                     map[string]Worker
+	leaseTTL                                        time.Duration
+	submitted, succeeded, failed, retried, canceled uint64
 }
 
 func New(s store.Store, workers int) *Scheduler {
@@ -108,12 +112,20 @@ func (s *Scheduler) Submit(t task.Task) error {
 			return errors.New("task cannot depend on itself")
 		}
 	}
-	return s.store.Create(t)
+	err := s.store.Create(t)
+	if err == nil {
+		atomic.AddUint64(&s.submitted, 1)
+	}
+	return err
 }
 
 func (s *Scheduler) Get(id string) (task.Task, error) { return s.store.Get(id) }
 
 func (s *Scheduler) List() ([]task.Task, error) { return s.store.List() }
+
+func (s *Scheduler) Metrics() Metrics {
+	return Metrics{Submitted: atomic.LoadUint64(&s.submitted), Succeeded: atomic.LoadUint64(&s.succeeded), Failed: atomic.LoadUint64(&s.failed), Retried: atomic.LoadUint64(&s.retried), Canceled: atomic.LoadUint64(&s.canceled)}
+}
 
 func (s *Scheduler) Cancel(id string) error {
 	t, err := s.store.Get(id)
@@ -130,7 +142,11 @@ func (s *Scheduler) Cancel(id string) error {
 	s.mu.Unlock()
 	now := time.Now()
 	t.Status, t.LastError, t.FinishedAt = task.StatusCanceled, task.ErrCanceled.Error(), &now
-	return s.store.Update(t)
+	err = s.store.Update(t)
+	if err == nil {
+		atomic.AddUint64(&s.canceled, 1)
+	}
+	return err
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -295,13 +311,16 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	current.LeaseToken = ""
 	if err == nil {
 		current.Status, current.LastError = task.StatusSuccess, ""
+		atomic.AddUint64(&s.succeeded, 1)
 	} else if current.Attempts < current.Retry.MaxAttempts {
 		current.Status = task.StatusRetrying
 		current.LastError = err.Error()
 		current.RunAt = now.Add(current.Retry.Backoff)
 		current.FinishedAt = nil
+		atomic.AddUint64(&s.retried, 1)
 	} else {
 		current.Status, current.LastError = task.StatusFailed, err.Error()
+		atomic.AddUint64(&s.failed, 1)
 	}
 	_ = s.store.Update(current)
 }
