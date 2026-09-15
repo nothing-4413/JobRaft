@@ -72,3 +72,24 @@ func TestDueSortsByPriority(t *testing.T) {
 		t.Fatalf("priority order incorrect: %+v", items)
 	}
 }
+
+func TestSchedulerHonorsDependencies(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	order := make([]string, 0, 2)
+	_ = s.Register("step", func(_ context.Context, t task.Task) error { order = append(order, t.ID); return nil })
+	if err := s.Submit(task.Task{ID: "first", Name: "step", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Submit(task.Task{ID: "second", Name: "step", DependsOn: []string{"first"}, Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	defer s.Stop()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && len(order) < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Fatalf("dependency order incorrect: %v", order)
+	}
+}

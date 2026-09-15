@@ -103,6 +103,11 @@ func (s *Scheduler) Submit(t task.Task) error {
 	if t.Retry.MaxAttempts < 1 {
 		t.Retry.MaxAttempts = 1
 	}
+	for _, dep := range t.DependsOn {
+		if dep == t.ID {
+			return errors.New("task cannot depend on itself")
+		}
+	}
 	return s.store.Create(t)
 }
 
@@ -184,6 +189,16 @@ func (s *Scheduler) dispatch() {
 		return
 	}
 	for _, t := range store.Due(items, time.Now()) {
+		ready, dependencyErr := s.dependenciesReady(t)
+		if dependencyErr != "" {
+			now := time.Now()
+			t.Status, t.LastError, t.FinishedAt = task.StatusFailed, dependencyErr, &now
+			_ = s.store.Update(t)
+			continue
+		}
+		if !ready {
+			continue
+		}
 		s.mu.Lock()
 		_, already := s.running[t.ID]
 		hasHandler := s.handlers[t.Name] != nil
@@ -215,6 +230,22 @@ func (s *Scheduler) dispatch() {
 			}
 		}
 	}
+}
+
+func (s *Scheduler) dependenciesReady(t task.Task) (bool, string) {
+	for _, id := range t.DependsOn {
+		dep, err := s.store.Get(id)
+		if err != nil {
+			return false, fmt.Sprintf("dependency %s not found", id)
+		}
+		if dep.Status == task.StatusFailed || dep.Status == task.StatusCanceled {
+			return false, fmt.Sprintf("dependency %s did not succeed", id)
+		}
+		if dep.Status != task.StatusSuccess {
+			return false, ""
+		}
+	}
+	return true, ""
 }
 
 func (s *Scheduler) worker(parent context.Context) {

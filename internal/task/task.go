@@ -29,6 +29,7 @@ type Task struct {
 	ID         string        `json:"id"`
 	Name       string        `json:"name"`
 	Priority   int           `json:"priority"`
+	DependsOn  []string      `json:"depends_on,omitempty"`
 	Payload    []byte        `json:"payload,omitempty"`
 	Status     Status        `json:"status"`
 	Attempts   int           `json:"attempts"`

@@ -81,14 +81,15 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID       string           `json:"id"`
-		Name     string           `json:"name"`
-		Priority int              `json:"priority"`
-		Payload  json.RawMessage  `json:"payload"`
-		RunAt    *time.Time       `json:"run_at"`
-		Delay    time.Duration    `json:"delay"`
-		Timeout  time.Duration    `json:"timeout"`
-		Retry    task.RetryPolicy `json:"retry"`
+		ID        string           `json:"id"`
+		Name      string           `json:"name"`
+		Priority  int              `json:"priority"`
+		DependsOn []string         `json:"depends_on"`
+		Payload   json.RawMessage  `json:"payload"`
+		RunAt     *time.Time       `json:"run_at"`
+		Delay     time.Duration    `json:"delay"`
+		Timeout   time.Duration    `json:"timeout"`
+		Retry     task.RetryPolicy `json:"retry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -100,7 +101,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	} else if req.Delay > 0 {
 		runAt = runAt.Add(req.Delay)
 	}
-	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
+	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
