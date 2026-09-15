@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -90,6 +91,9 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		runAt = runAt.Add(req.Delay)
 	}
 	t := task.Task{ID: req.ID, Name: req.Name, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
+	if t.ID == "" {
+		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
+	}
 	if err := s.scheduler.Submit(t); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

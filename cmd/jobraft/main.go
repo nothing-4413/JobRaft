@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,7 +17,14 @@ import (
 )
 
 func main() {
-	st := store.NewMemory()
+	var st store.Store = store.NewMemory()
+	if path := os.Getenv("JOBRAFT_STORE"); path != "" {
+		if persisted, err := store.NewFile(filepath.Clean(path)); err == nil {
+			st = persisted
+		} else {
+			log.Printf("file store unavailable, using memory: %v", err)
+		}
+	}
 	sch := scheduler.New(st, 4)
 	_ = sch.Register("echo", func(ctx context.Context, t task.Task) error { return nil })
 	ctx, cancel := context.WithCancel(context.Background())
