@@ -35,6 +35,8 @@ type Task struct {
 	Attempts   int           `json:"attempts"`
 	Retry      RetryPolicy   `json:"retry"`
 	RunAt      time.Time     `json:"run_at"`
+	Schedule   time.Duration `json:"schedule"`
+	RunCount   int           `json:"run_count"`
 	Timeout    time.Duration `json:"timeout"`
 	LastError  string        `json:"last_error,omitempty"`
 	CreatedAt  time.Time     `json:"created_at"`

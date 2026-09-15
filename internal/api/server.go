@@ -122,6 +122,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		RunAt     *time.Time       `json:"run_at"`
 		Delay     time.Duration    `json:"delay"`
 		Timeout   time.Duration    `json:"timeout"`
+		Schedule  time.Duration    `json:"schedule"`
 		Retry     task.RetryPolicy `json:"retry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -134,7 +135,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	} else if req.Delay > 0 {
 		runAt = runAt.Add(req.Delay)
 	}
-	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Retry: req.Retry}
+	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}

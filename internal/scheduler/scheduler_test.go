@@ -118,3 +118,21 @@ func TestExternalWorkerClaimAndComplete(t *testing.T) {
 		t.Fatalf("expected success, got %s", got.Status)
 	}
 }
+
+func TestScheduledTaskRunsAgain(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	count := 0
+	_ = s.Register("periodic", func(context.Context, task.Task) error { count++; return nil })
+	if err := s.Submit(task.Task{ID: "periodic-1", Name: "periodic", Schedule: 10 * time.Millisecond, Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	defer s.Stop()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && count < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if count < 2 {
+		t.Fatalf("expected recurring task to run twice, got %d", count)
+	}
+}

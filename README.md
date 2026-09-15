@@ -25,6 +25,8 @@ Inspect, list, or cancel tasks with `GET /tasks`, `GET /tasks/{id}`, and
 Tasks can declare predecessor IDs through `depends_on`; they run only after all
 predecessors succeed, and fail automatically if a predecessor fails or is
 canceled.
+Set `schedule` to a duration in nanoseconds to create a recurring task; after
+each successful run it returns to `pending` and is scheduled again.
 
 Workers can be registered and kept alive with `POST /workers` and
 `POST /workers/{id}`; inspect them with `GET /workers`.

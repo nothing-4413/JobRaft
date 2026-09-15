@@ -389,10 +389,16 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 
 func (s *Scheduler) finish(current task.Task, err error) {
 	now := time.Now()
+	current.RunCount++
 	current.FinishedAt = &now
 	current.LeaseUntil, current.WorkerID, current.LeaseToken = nil, "", ""
 	if err == nil {
-		current.Status, current.LastError = task.StatusSuccess, ""
+		current.LastError = ""
+		if current.Schedule > 0 {
+			current.Status, current.RunAt, current.FinishedAt = task.StatusPending, now.Add(current.Schedule), nil
+		} else {
+			current.Status = task.StatusSuccess
+		}
 		atomic.AddUint64(&s.succeeded, 1)
 	} else if current.Attempts < current.Retry.MaxAttempts {
 		current.Status = task.StatusRetrying
