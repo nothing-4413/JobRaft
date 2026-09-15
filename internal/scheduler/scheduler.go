@@ -191,6 +191,9 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 		defer timeoutCancel()
 	}
 	err = h(ctx, t)
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	current, getErr := s.store.Get(t.ID)
 	if getErr != nil || current.Status == task.StatusCanceled {
 		return
