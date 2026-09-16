@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nothing-4413/JobRaft/internal/api"
+	"github.com/nothing-4413/JobRaft/internal/cluster"
 	"github.com/nothing-4413/JobRaft/internal/scheduler"
 	"github.com/nothing-4413/JobRaft/internal/store"
 	"github.com/nothing-4413/JobRaft/internal/task"
@@ -33,7 +34,17 @@ func main() {
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	sch.Start(ctx)
-	server := &http.Server{Addr: ":8080", Handler: api.New(sch).Handler(), ReadHeaderTimeout: 5 * time.Second}
+	apiServer := api.New(sch)
+	var elector *cluster.Elector
+	if nodeID := os.Getenv("JOBRAFT_NODE_ID"); nodeID != "" {
+		registry := cluster.NewMemoryRegistry()
+		elector, _ = cluster.NewElector(registry, nodeID, 10*time.Second)
+		elector.Start()
+		defer elector.Stop()
+		sch.SetLeaderGate(elector)
+		apiServer = api.NewWithCluster(sch, registry)
+	}
+	server := &http.Server{Addr: ":8080", Handler: apiServer.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Printf("JobRaft listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

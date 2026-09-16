@@ -14,6 +14,7 @@ import (
 
 // Handler executes a task payload. Returning an error makes the task retryable.
 type Handler func(context.Context, task.Task) error
+type LeaderGate interface{ IsLeader() bool }
 
 var ErrNoTask = errors.New("no task available")
 var ErrBackpressure = errors.New("scheduler queue is full")
@@ -40,6 +41,7 @@ type Scheduler struct {
 	workersByID                                     map[string]Worker
 	leaseTTL                                        time.Duration
 	maxPending                                      int
+	leaderGate                                      LeaderGate
 	submitted, succeeded, failed, retried, canceled uint64
 }
 
@@ -55,6 +57,8 @@ func (s *Scheduler) SetMaxPending(limit int) {
 		s.maxPending = limit
 	}
 }
+
+func (s *Scheduler) SetLeaderGate(g LeaderGate) { s.leaderGate = g }
 
 func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
 	if id == "" {
@@ -163,6 +167,9 @@ func (s *Scheduler) Metrics() Metrics {
 // Claim reserves one eligible task for an external worker. The returned lease
 // token must be supplied to CompleteTask.
 func (s *Scheduler) Claim(workerID string) (task.Task, error) {
+	if s.leaderGate != nil && !s.leaderGate.IsLeader() {
+		return task.Task{}, errors.New("scheduler is not leader")
+	}
 	if !s.workerHealthy(workerID) {
 		return task.Task{}, errors.New("worker is not registered or lease expired")
 	}
@@ -302,6 +309,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 }
 
 func (s *Scheduler) dispatch() {
+	if s.leaderGate != nil && !s.leaderGate.IsLeader() {
+		return
+	}
 	s.reapExpired()
 	items, err := s.store.List()
 	if err != nil {

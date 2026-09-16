@@ -7,13 +7,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nothing-4413/JobRaft/internal/cluster"
 	"github.com/nothing-4413/JobRaft/internal/scheduler"
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
 
-type Server struct{ scheduler *scheduler.Scheduler }
+type Server struct {
+	scheduler *scheduler.Scheduler
+	registry  cluster.Registry
+}
 
 func New(s *scheduler.Scheduler) *Server { return &Server{scheduler: s} }
+func NewWithCluster(s *scheduler.Scheduler, r cluster.Registry) *Server {
+	return &Server{scheduler: s, registry: r}
+}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -21,11 +28,30 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/metrics", s.metrics)
+	mux.HandleFunc("/cluster", s.cluster)
 	mux.HandleFunc("/tasks", s.tasks)
 	mux.HandleFunc("/tasks/", s.taskByID)
 	mux.HandleFunc("/workers", s.workers)
 	mux.HandleFunc("/workers/", s.workerHeartbeat)
 	return mux
+}
+
+func (s *Server) cluster(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "cluster election is not configured"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"leader": func() interface{} {
+		n, ok := s.registry.Leader()
+		if !ok {
+			return nil
+		}
+		return n
+	}(), "nodes": s.registry.List()})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {

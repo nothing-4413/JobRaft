@@ -37,6 +37,11 @@ Prometheus-compatible counters are available from `GET /metrics`.
 The scheduler applies a configurable in-flight task limit through
 `SetMaxPending`; submissions over the limit receive HTTP 429.
 
+For leader-election mode, set `JOBRAFT_NODE_ID`. The in-memory election
+registry exposes the current node/leader through `GET /cluster`; the registry
+interface is designed to be replaced by a Raft-backed implementation for
+multi-process deployments.
+
 ## State machine
 
 Tasks move from `pending` to `running`, then to `success`. A failed execution
