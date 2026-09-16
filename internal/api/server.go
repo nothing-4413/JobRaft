@@ -27,6 +27,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/metrics", s.metrics)
 	mux.HandleFunc("/cluster", s.cluster)
 	mux.HandleFunc("/admin", s.admin)
@@ -35,6 +36,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/workers", s.workers)
 	mux.HandleFunc("/workers/", s.workerHeartbeat)
 	return mux
+}
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := s.scheduler.List(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
