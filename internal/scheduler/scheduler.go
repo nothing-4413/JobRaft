@@ -58,6 +58,12 @@ func (s *Scheduler) SetMaxPending(limit int) {
 	}
 }
 
+func (s *Scheduler) SetLeaseTTL(ttl time.Duration) {
+	if ttl > 0 {
+		s.leaseTTL = ttl
+	}
+}
+
 func (s *Scheduler) SetLeaderGate(g LeaderGate) { s.leaderGate = g }
 
 func (s *Scheduler) RegisterWorker(id string) (Worker, error) {

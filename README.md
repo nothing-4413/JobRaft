@@ -70,6 +70,8 @@ Deployment settings:
 - `JOBRAFT_STORE` (optional JSON persistence path)
 - `JOBRAFT_NODE_ID` (optional leader-election identity)
 - `JOBRAFT_CLUSTER_FILE` (optional shared registry file for multi-process leader election)
+- `JOBRAFT_MAX_PENDING` (optional in-flight task limit)
+- `JOBRAFT_LEASE_TTL` (optional worker/task lease duration, e.g. `30s`)
 
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.

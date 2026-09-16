@@ -34,6 +34,16 @@ func main() {
 		}
 	}
 	sch := scheduler.New(st, workers)
+	if value := os.Getenv("JOBRAFT_MAX_PENDING"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			sch.SetMaxPending(parsed)
+		}
+	}
+	if value := os.Getenv("JOBRAFT_LEASE_TTL"); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil {
+			sch.SetLeaseTTL(parsed)
+		}
+	}
 	_ = sch.Register("echo", func(ctx context.Context, t task.Task) error { return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
