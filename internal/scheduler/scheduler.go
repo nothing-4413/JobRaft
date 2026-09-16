@@ -148,12 +148,38 @@ func (s *Scheduler) Submit(t task.Task) error {
 		if dep == t.ID {
 			return errors.New("task cannot depend on itself")
 		}
+		if _, err := s.store.Get(dep); err != nil {
+			return fmt.Errorf("dependency %s not found", dep)
+		}
+		if s.dependsOn(dep, t.ID, map[string]bool{}) {
+			return fmt.Errorf("dependency cycle detected through %s", dep)
+		}
 	}
 	err := s.store.Create(t)
 	if err == nil {
 		atomic.AddUint64(&s.submitted, 1)
 	}
 	return err
+}
+
+func (s *Scheduler) dependsOn(id, target string, seen map[string]bool) bool {
+	if id == target {
+		return true
+	}
+	if seen[id] {
+		return false
+	}
+	seen[id] = true
+	t, err := s.store.Get(id)
+	if err != nil {
+		return false
+	}
+	for _, dep := range t.DependsOn {
+		if s.dependsOn(dep, target, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) Get(id string) (task.Task, error) { return s.store.Get(id) }

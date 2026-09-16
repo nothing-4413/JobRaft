@@ -147,3 +147,11 @@ func TestSchedulerBackpressure(t *testing.T) {
 		t.Fatalf("expected backpressure, got %v", err)
 	}
 }
+
+func TestSubmitRejectsMissingDependency(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})
+	if err == nil {
+		t.Fatal("expected missing dependency error")
+	}
+}
