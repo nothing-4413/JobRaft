@@ -41,6 +41,9 @@ For leader-election mode, set `JOBRAFT_NODE_ID`. The in-memory election
 registry exposes the current node/leader through `GET /cluster`; the registry
 interface is designed to be replaced by a Raft-backed implementation for
 multi-process deployments.
+With `JOBRAFT_CLUSTER_FILE`, a shared JSON file and exclusive lock provide a
+lightweight cross-process lease election. Use a consensus-backed registry for
+network partitions and larger clusters.
 
 External workers can use `pkg/workerclient`'s `Client.Run` to handle the
 register/heartbeat/claim/complete loop without manually constructing HTTP
