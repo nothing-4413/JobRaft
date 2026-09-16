@@ -122,7 +122,26 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/workers/"), "/claim")
-	t, err := s.scheduler.Claim(path)
+	wait := r.URL.Query().Get("wait")
+	deadline := time.Now()
+	if wait != "" {
+		if d, err := time.ParseDuration(wait); err == nil && d > 0 && d <= 30*time.Second {
+			deadline = deadline.Add(d)
+		}
+	}
+	var t task.Task
+	var err error
+	for {
+		t, err = s.scheduler.Claim(path)
+		if err == nil {
+			writeJSON(w, http.StatusOK, t)
+			return
+		}
+		if err != scheduler.ErrNoTask || !deadline.After(time.Now()) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err == scheduler.ErrNoTask {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -131,7 +150,7 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {

@@ -35,8 +35,16 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 }
 
 func (c *Client) Claim(ctx context.Context) (task.Task, error) {
+	return c.ClaimWait(ctx, 0)
+}
+
+func (c *Client) ClaimWait(ctx context.Context, wait time.Duration) (task.Task, error) {
 	var t task.Task
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/workers/"+c.WorkerID+"/claim", nil)
+	path := "/workers/" + c.WorkerID + "/claim"
+	if wait > 0 {
+		path += "?wait=" + wait.String()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, nil)
 	if err != nil {
 		return t, err
 	}
@@ -80,7 +88,7 @@ func (c *Client) Run(ctx context.Context, handler Handler) error {
 		if err := c.Heartbeat(ctx); err != nil {
 			return err
 		}
-		t, err := c.Claim(ctx)
+		t, err := c.ClaimWait(ctx, interval)
 		if err == nil {
 			runErr := handler(ctx, t)
 			if completeErr := c.Complete(ctx, t, runErr); completeErr != nil {

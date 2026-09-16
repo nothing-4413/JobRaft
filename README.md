@@ -33,6 +33,7 @@ Workers can be registered and kept alive with `POST /workers` and
 An external worker can pull work with `POST /workers/{id}/claim` and acknowledge
 it using `POST /tasks/{id}?complete=true` with `worker_id`, `lease_token`, and
 an optional `error` field. Heartbeats renew the worker's active task leases.
+Add `?wait=10s` to the claim request for long polling (maximum 30 seconds).
 Prometheus-compatible counters are available from `GET /metrics`.
 The scheduler applies a configurable in-flight task limit through
 `SetMaxPending`; submissions over the limit receive HTTP 429.
