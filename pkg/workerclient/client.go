@@ -15,6 +15,8 @@ import (
 
 type Handler func(context.Context, task.Task) error
 
+var ErrNoTask = errors.New("no task available")
+
 type Client struct {
 	BaseURL, WorkerID string
 	HTTPClient        *http.Client
@@ -54,7 +56,7 @@ func (c *Client) ClaimWait(ctx context.Context, wait time.Duration) (task.Task, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNoContent {
-		return t, errors.New("no task")
+		return t, ErrNoTask
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := ioutil.ReadAll(resp.Body)
@@ -102,6 +104,9 @@ func (c *Client) Run(ctx context.Context, handler Handler) error {
 				return completeErr
 			}
 			continue
+		}
+		if !errors.Is(err, ErrNoTask) {
+			return err
 		}
 		select {
 		case <-ctx.Done():

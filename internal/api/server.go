@@ -153,7 +153,12 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		if err != scheduler.ErrNoTask || !deadline.After(time.Now()) {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+		}
 	}
 	if err == scheduler.ErrNoTask {
 		w.WriteHeader(http.StatusNoContent)
