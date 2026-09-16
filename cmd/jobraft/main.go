@@ -62,7 +62,7 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	server := &http.Server{Addr: addr, Handler: apiServer.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: addr, Handler: apiServer.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
 		log.Printf("JobRaft listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
