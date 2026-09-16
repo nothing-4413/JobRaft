@@ -44,14 +44,12 @@ func (r *MemoryRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
-	if _, ok := r.nodes[id]; !ok {
-		r.nodes[id] = Node{ID: id}
-	}
 	for key, n := range r.nodes {
 		if !n.LeaseUntil.After(now) {
 			delete(r.nodes, key)
 		}
 	}
+	r.nodes[id] = Node{ID: id}
 	n := r.nodes[id]
 	n.LastContact, n.LeaseUntil, n.Role = now, now.Add(ttl), Follower
 	ids := make([]string, 0, len(r.nodes))

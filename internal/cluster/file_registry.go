@@ -43,6 +43,7 @@ func (r *FileRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 			delete(nodes, key)
 		}
 	}
+	nodes[id] = Node{ID: id}
 	n := nodes[id]
 	n.ID, n.LastContact, n.LeaseUntil, n.Role = id, now, now.Add(ttl), Follower
 	nodes[id] = n

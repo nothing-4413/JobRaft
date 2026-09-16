@@ -46,6 +46,12 @@ With `JOBRAFT_CLUSTER_FILE`, a shared JSON file and exclusive lock provide a
 lightweight cross-process lease election. Use a consensus-backed registry for
 network partitions and larger clusters.
 
+`internal/cluster.ConsensusGroup` provides an embedded replicated-log
+state-machine and quorum API for deterministic tests and local integration.
+It intentionally does not claim to replace a full Raft implementation across
+untrusted networks; the `ReplicatedLog` interface is the boundary for adding
+that transport later.
+
 External workers can use `pkg/workerclient`'s `Client.Run` to handle the
 register/heartbeat/claim/complete loop without manually constructing HTTP
 requests.
