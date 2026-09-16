@@ -237,6 +237,10 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 }
 
 func (s *Scheduler) CompleteTask(workerID, id, token, failure string) error {
+	return s.CompleteTaskWithResult(workerID, id, token, failure, nil)
+}
+
+func (s *Scheduler) CompleteTaskWithResult(workerID, id, token, failure string, result []byte) error {
 	t, err := s.store.Get(id)
 	if err != nil {
 		return err
@@ -248,6 +252,9 @@ func (s *Scheduler) CompleteTask(workerID, id, token, failure string) error {
 		err = errors.New(failure)
 	} else {
 		err = nil
+	}
+	if err == nil {
+		t.Result = append([]byte(nil), result...)
 	}
 	s.finish(t, err)
 	s.mu.Lock()

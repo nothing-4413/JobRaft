@@ -64,9 +64,16 @@ func (c *Client) ClaimWait(ctx context.Context, wait time.Duration) (task.Task, 
 }
 
 func (c *Client) Complete(ctx context.Context, t task.Task, err error) error {
-	payload := map[string]string{"worker_id": c.WorkerID, "lease_token": t.LeaseToken}
+	return c.CompleteWithResult(ctx, t, err, nil)
+}
+
+func (c *Client) CompleteWithResult(ctx context.Context, t task.Task, err error, result []byte) error {
+	payload := map[string]interface{}{"worker_id": c.WorkerID, "lease_token": t.LeaseToken}
 	if err != nil {
 		payload["error"] = err.Error()
+	}
+	if result != nil {
+		payload["result"] = json.RawMessage(result)
 	}
 	return c.postJSON(ctx, "/tasks/"+t.ID+"?complete=true", payload, nil)
 }

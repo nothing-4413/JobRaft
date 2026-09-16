@@ -31,6 +31,7 @@ type Task struct {
 	Priority   int           `json:"priority"`
 	DependsOn  []string      `json:"depends_on,omitempty"`
 	Payload    []byte        `json:"payload,omitempty"`
+	Result     []byte        `json:"result,omitempty"`
 	Status     Status        `json:"status"`
 	Attempts   int           `json:"attempts"`
 	Retry      RetryPolicy   `json:"retry"`

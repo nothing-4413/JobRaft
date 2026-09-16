@@ -223,15 +223,16 @@ func (s *Server) taskByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && r.URL.Query().Get("complete") == "true" {
 		var req struct {
-			WorkerID   string `json:"worker_id"`
-			LeaseToken string `json:"lease_token"`
-			Error      string `json:"error"`
+			WorkerID   string          `json:"worker_id"`
+			LeaseToken string          `json:"lease_token"`
+			Error      string          `json:"error"`
+			Result     json.RawMessage `json:"result"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.scheduler.CompleteTask(req.WorkerID, id, req.LeaseToken, req.Error); err != nil {
+		if err := s.scheduler.CompleteTaskWithResult(req.WorkerID, id, req.LeaseToken, req.Error, req.Result); err != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}

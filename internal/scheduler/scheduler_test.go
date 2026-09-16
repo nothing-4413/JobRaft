@@ -119,6 +119,25 @@ func TestExternalWorkerClaimAndComplete(t *testing.T) {
 	}
 }
 
+func TestExternalWorkerStoresResult(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	if err := s.Submit(task.Task{ID: "result-1", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := s.RegisterWorker("worker-result")
+	claimed, err := s.Claim(w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteTaskWithResult(w.ID, claimed.ID, claimed.LeaseToken, "", []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(claimed.ID)
+	if string(got.Result) != `{"ok":true}` {
+		t.Fatalf("result=%s", got.Result)
+	}
+}
+
 func TestScheduledTaskRunsAgain(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	count := 0

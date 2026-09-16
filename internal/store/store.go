@@ -77,6 +77,9 @@ func clone(t task.Task) task.Task {
 	if t.Payload != nil {
 		t.Payload = append([]byte(nil), t.Payload...)
 	}
+	if t.Result != nil {
+		t.Result = append([]byte(nil), t.Result...)
+	}
 	if t.DependsOn != nil {
 		t.DependsOn = append([]string(nil), t.DependsOn...)
 	}
