@@ -53,6 +53,7 @@ Deployment settings:
 - `JOBRAFT_WORKERS` (default `4`)
 - `JOBRAFT_STORE` (optional JSON persistence path)
 - `JOBRAFT_NODE_ID` (optional leader-election identity)
+- `JOBRAFT_CLUSTER_FILE` (optional shared registry file for multi-process leader election)
 
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.

@@ -44,7 +44,14 @@ func main() {
 	apiServer := api.New(sch)
 	var elector *cluster.Elector
 	if nodeID := os.Getenv("JOBRAFT_NODE_ID"); nodeID != "" {
-		registry := cluster.NewMemoryRegistry()
+		var registry cluster.Registry = cluster.NewMemoryRegistry()
+		if path := os.Getenv("JOBRAFT_CLUSTER_FILE"); path != "" {
+			if shared, err := cluster.NewFileRegistry(filepath.Clean(path)); err == nil {
+				registry = shared
+			} else {
+				log.Printf("cluster file unavailable, using memory: %v", err)
+			}
+		}
 		elector, _ = cluster.NewElector(registry, nodeID, 10*time.Second)
 		elector.Start()
 		defer elector.Stop()
