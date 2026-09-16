@@ -69,6 +69,15 @@ func (c *Client) Complete(ctx context.Context, t task.Task, err error) error {
 	return c.CompleteWithResult(ctx, t, err, nil)
 }
 
+func (c *Client) RenewLease(ctx context.Context, t task.Task) (task.Task, error) {
+	var renewed task.Task
+	path := "/workers/" + c.WorkerID + "/tasks/renew?task=" + t.ID
+	if err := c.postJSON(ctx, path, map[string]string{"lease_token": t.LeaseToken}, &renewed); err != nil {
+		return renewed, err
+	}
+	return renewed, nil
+}
+
 func (c *Client) CompleteWithResult(ctx context.Context, t task.Task, err error, result []byte) error {
 	payload := map[string]interface{}{"worker_id": c.WorkerID, "lease_token": t.LeaseToken}
 	if err != nil {

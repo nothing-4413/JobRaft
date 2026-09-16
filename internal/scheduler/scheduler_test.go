@@ -138,6 +138,30 @@ func TestExternalWorkerStoresResult(t *testing.T) {
 	}
 }
 
+func TestExternalWorkerRenewsLease(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	if err := s.Submit(task.Task{ID: "renew-1", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := s.RegisterWorker("worker-renew")
+	claimed, err := s.Claim(w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := claimed.LeaseUntil
+	time.Sleep(time.Millisecond)
+	renewed, err := s.RenewTaskLease(w.ID, claimed.ID, claimed.LeaseToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.LeaseUntil == nil || old == nil || !renewed.LeaseUntil.After(*old) {
+		t.Fatalf("lease did not advance: old=%v new=%v", old, renewed.LeaseUntil)
+	}
+	if _, err := s.RenewTaskLease(w.ID, claimed.ID, "wrong"); err == nil {
+		t.Fatal("expected invalid token error")
+	}
+}
+
 func TestScheduledTaskRunsAgain(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	count := 0

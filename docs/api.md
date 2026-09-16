@@ -17,6 +17,8 @@ All request and response bodies use JSON unless noted otherwise.
 - `POST /workers`: register `{ "id": "worker-1" }`.
 - `POST /workers/{id}`: heartbeat and renew leases.
 - `POST /workers/{id}/claim?wait=10s`: claim a task, optionally using long poll.
+- `POST /workers/{id}/tasks/renew?task={task_id}`: renew a claimed task lease
+  with `{ "lease_token": "..." }`.
 - `GET /workers`: list workers.
 
 ## Operations
@@ -26,4 +28,3 @@ All request and response bodies use JSON unless noted otherwise.
 - `GET /metrics`: Prometheus text format.
 - `GET /cluster`: leader and node information when cluster election is enabled.
 - `GET /admin`: live browser dashboard.
-

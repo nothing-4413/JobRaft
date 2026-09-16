@@ -129,6 +129,10 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.workerClaim(w, r)
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, "/renew") {
+		s.workerRenew(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -140,6 +144,31 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, wkr)
+}
+
+func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/workers/"), "/")
+	if len(parts) != 3 || parts[1] != "tasks" || parts[2] != "renew" {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		LeaseToken string `json:"lease_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	t, err := s.scheduler.RenewTaskLease(parts[0], r.URL.Query().Get("task"), req.LeaseToken)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {

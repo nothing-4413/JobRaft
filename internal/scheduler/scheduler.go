@@ -246,6 +246,23 @@ func (s *Scheduler) CompleteTask(workerID, id, token, failure string) error {
 	return s.CompleteTaskWithResult(workerID, id, token, failure, nil)
 }
 
+// RenewTaskLease extends one task lease after validating its owner and token.
+func (s *Scheduler) RenewTaskLease(workerID, id, token string) (task.Task, error) {
+	t, err := s.store.Get(id)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if t.Status != task.StatusRunning || t.WorkerID != workerID || t.LeaseToken != token {
+		return task.Task{}, errors.New("invalid task lease")
+	}
+	until := time.Now().Add(s.leaseTTL)
+	t.LeaseUntil = &until
+	if err := s.store.Update(t); err != nil {
+		return task.Task{}, err
+	}
+	return t, nil
+}
+
 func (s *Scheduler) CompleteTaskWithResult(workerID, id, token, failure string, result []byte) error {
 	t, err := s.store.Get(id)
 	if err != nil {
