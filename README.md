@@ -38,6 +38,8 @@ returned by the task query/list APIs. The SDK exposes this as
 `CompleteWithResult`.
 Add `?wait=10s` to the claim request for long polling (maximum 30 seconds).
 Prometheus-compatible counters are available from `GET /metrics`.
+The endpoint also exposes current pending, running, retrying, and online-worker
+gauges for queue pressure dashboards.
 Use `/healthz` for liveness and `/readyz` for readiness probes.
 The scheduler applies a configurable in-flight task limit through
 `SetMaxPending`; submissions over the limit receive HTTP 429.

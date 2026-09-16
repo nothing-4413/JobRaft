@@ -83,8 +83,21 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := s.scheduler.Metrics()
+	items, _ := s.scheduler.List()
+	pending, running, retrying := 0, 0, 0
+	for _, item := range items {
+		switch item.Status {
+		case task.StatusPending:
+			pending++
+		case task.StatusRunning:
+			running++
+		case task.StatusRetrying:
+			retrying++
+		}
+	}
+	workers := len(s.scheduler.Workers())
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "jobraft_tasks_submitted_total %d\njobraft_tasks_succeeded_total %d\njobraft_tasks_failed_total %d\njobraft_tasks_retried_total %d\njobraft_tasks_canceled_total %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled)
+	_, _ = fmt.Fprintf(w, "jobraft_tasks_submitted_total %d\njobraft_tasks_succeeded_total %d\njobraft_tasks_failed_total %d\njobraft_tasks_retried_total %d\njobraft_tasks_canceled_total %d\njobraft_tasks_pending %d\njobraft_tasks_running %d\njobraft_tasks_retrying %d\njobraft_workers_online %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled, pending, running, retrying, workers)
 }
 
 func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
