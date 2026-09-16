@@ -210,6 +210,18 @@ func TestSchedulerBackpressure(t *testing.T) {
 	}
 }
 
+func TestDispatchReservesTaskBeforeWorkerExecution(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	_ = s.Register("noop", func(context.Context, task.Task) error { return nil })
+	if err := s.Submit(task.Task{ID: "reservation-1", Name: "noop", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	if _, ok := s.running["reservation-1"]; !ok {
+		t.Fatal("expected task reservation")
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

@@ -413,6 +413,10 @@ func (s *Scheduler) dispatch() {
 				delete(s.running, t.ID)
 				s.mu.Unlock()
 			}
+		} else {
+			s.mu.Lock()
+			delete(s.running, t.ID)
+			s.mu.Unlock()
 		}
 	}
 }
@@ -447,6 +451,9 @@ func (s *Scheduler) worker(parent context.Context) {
 func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	current, err := s.store.Get(t.ID)
 	if err != nil || current.Status != task.StatusRunning || current.LeaseToken != t.LeaseToken {
+		s.mu.Lock()
+		delete(s.running, t.ID)
+		s.mu.Unlock()
 		return
 	}
 	s.mu.Lock()
