@@ -468,6 +468,8 @@ func (s *Scheduler) finish(current task.Task, err error) {
 		current.LastError = ""
 		if current.Schedule > 0 {
 			current.Status, current.RunAt, current.FinishedAt = task.StatusPending, now.Add(current.Schedule), nil
+			current.Attempts = 0
+			current.StartedAt = nil
 		} else {
 			current.Status = task.StatusSuccess
 		}

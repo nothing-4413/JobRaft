@@ -156,6 +156,25 @@ func TestScheduledTaskRunsAgain(t *testing.T) {
 	}
 }
 
+func TestScheduledTaskResetsAttempts(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	count := 0
+	_ = s.Register("periodic-reset", func(context.Context, task.Task) error { count++; return nil })
+	if err := s.Submit(task.Task{ID: "periodic-reset-1", Name: "periodic-reset", Schedule: 10 * time.Millisecond, Retry: task.RetryPolicy{MaxAttempts: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	defer s.Stop()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && count < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _ := s.Get("periodic-reset-1")
+	if count < 2 || got.Attempts > 1 {
+		t.Fatalf("attempts were not reset: count=%d attempts=%d", count, got.Attempts)
+	}
+}
+
 func TestSchedulerBackpressure(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	s.SetMaxPending(1)

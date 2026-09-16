@@ -56,3 +56,18 @@ func TestTaskHTTPFlow(t *testing.T) {
 		t.Fatalf("metrics missing submission: %s", b)
 	}
 }
+
+func TestTaskPayloadIsJSONNotBase64(t *testing.T) {
+	s := scheduler.New(store.NewMemory(), 1)
+	ts := httptest.NewServer(New(s).Handler())
+	defer ts.Close()
+	resp, err := http.Post(ts.URL+"/tasks", "application/json", strings.NewReader(`{"id":"json-1","name":"remote","payload":{"message":"hello"},"retry":{"max_attempts":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `"payload":{"message":"hello"}`) {
+		t.Fatalf("payload was not emitted as JSON: %s", b)
+	}
+}

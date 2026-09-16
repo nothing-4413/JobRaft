@@ -2,6 +2,7 @@
 package task
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -26,26 +27,26 @@ type RetryPolicy struct {
 
 // Task is a unit of work submitted to JobRaft.
 type Task struct {
-	ID         string        `json:"id"`
-	Name       string        `json:"name"`
-	Priority   int           `json:"priority"`
-	DependsOn  []string      `json:"depends_on,omitempty"`
-	Payload    []byte        `json:"payload,omitempty"`
-	Result     []byte        `json:"result,omitempty"`
-	Status     Status        `json:"status"`
-	Attempts   int           `json:"attempts"`
-	Retry      RetryPolicy   `json:"retry"`
-	RunAt      time.Time     `json:"run_at"`
-	Schedule   time.Duration `json:"schedule"`
-	RunCount   int           `json:"run_count"`
-	Timeout    time.Duration `json:"timeout"`
-	LastError  string        `json:"last_error,omitempty"`
-	CreatedAt  time.Time     `json:"created_at"`
-	StartedAt  *time.Time    `json:"started_at,omitempty"`
-	FinishedAt *time.Time    `json:"finished_at,omitempty"`
-	WorkerID   string        `json:"worker_id,omitempty"`
-	LeaseUntil *time.Time    `json:"lease_until,omitempty"`
-	LeaseToken string        `json:"lease_token,omitempty"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Priority   int             `json:"priority"`
+	DependsOn  []string        `json:"depends_on,omitempty"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Status     Status          `json:"status"`
+	Attempts   int             `json:"attempts"`
+	Retry      RetryPolicy     `json:"retry"`
+	RunAt      time.Time       `json:"run_at"`
+	Schedule   time.Duration   `json:"schedule"`
+	RunCount   int             `json:"run_count"`
+	Timeout    time.Duration   `json:"timeout"`
+	LastError  string          `json:"last_error,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	StartedAt  *time.Time      `json:"started_at,omitempty"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	WorkerID   string          `json:"worker_id,omitempty"`
+	LeaseUntil *time.Time      `json:"lease_until,omitempty"`
+	LeaseToken string          `json:"lease_token,omitempty"`
 }
 
 var (
