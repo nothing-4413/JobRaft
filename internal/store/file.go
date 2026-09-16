@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/nothing-4413/JobRaft/internal/fileutil"
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
 
@@ -93,5 +94,5 @@ func (s *FileStore) saveLocked() error {
 	if err := ioutil.WriteFile(tmp, b, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return fileutil.Replace(tmp, s.path)
 }

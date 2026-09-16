@@ -3,6 +3,7 @@ package cluster
 import (
 	"encoding/json"
 	"errors"
+	"github.com/nothing-4413/JobRaft/internal/fileutil"
 	"io/ioutil"
 	"os"
 	"sort"
@@ -110,7 +111,7 @@ func (r *FileRegistry) write(nodes map[string]Node) error {
 	if err := ioutil.WriteFile(tmp, b, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, r.path)
+	return fileutil.Replace(tmp, r.path)
 }
 func (r *FileRegistry) lock() (func(), error) {
 	lockPath := r.path + ".lock"
