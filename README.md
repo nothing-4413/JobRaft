@@ -47,6 +47,16 @@ register/heartbeat/claim/complete loop without manually constructing HTTP
 requests.
 Open `GET /admin` in a browser for a lightweight live management dashboard.
 
+Deployment settings:
+
+- `JOBRAFT_ADDR` (default `:8080`)
+- `JOBRAFT_WORKERS` (default `4`)
+- `JOBRAFT_STORE` (optional JSON persistence path)
+- `JOBRAFT_NODE_ID` (optional leader-election identity)
+
+Build a container with `docker build -t jobraft .` and run it with a writable
+`/data` volume for persistence.
+
 ## State machine
 
 Tasks move from `pending` to `running`, then to `success`. A failed execution

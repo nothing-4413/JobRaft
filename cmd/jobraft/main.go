@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,7 +27,13 @@ func main() {
 			log.Printf("file store unavailable, using memory: %v", err)
 		}
 	}
-	sch := scheduler.New(st, 4)
+	workers := 4
+	if value := os.Getenv("JOBRAFT_WORKERS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			workers = parsed
+		}
+	}
+	sch := scheduler.New(st, workers)
 	_ = sch.Register("echo", func(ctx context.Context, t task.Task) error { return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -44,7 +51,11 @@ func main() {
 		sch.SetLeaderGate(elector)
 		apiServer = api.NewWithCluster(sch, registry)
 	}
-	server := &http.Server{Addr: ":8080", Handler: apiServer.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	addr := os.Getenv("JOBRAFT_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	server := &http.Server{Addr: addr, Handler: apiServer.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Printf("JobRaft listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
