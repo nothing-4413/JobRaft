@@ -52,32 +52,41 @@ func (r *MemoryRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 	r.nodes[id] = Node{ID: id}
 	n := r.nodes[id]
 	n.LastContact, n.LeaseUntil, n.Role = now, now.Add(ttl), Follower
+	r.nodes[id] = n
 	ids := make([]string, 0, len(r.nodes))
-	for key := range r.nodes {
+	for key, node := range r.nodes {
+		node.Role = Follower
+		r.nodes[key] = node
 		ids = append(ids, key)
 	}
 	sort.Strings(ids)
 	if len(ids) > 0 {
-		r.nodes[ids[0]] = Node{ID: ids[0], LastContact: now, LeaseUntil: r.nodes[ids[0]].LeaseUntil, Role: Leader}
+		leader := r.nodes[ids[0]]
+		leader.Role = Leader
+		r.nodes[ids[0]] = leader
 	}
-	r.nodes[id] = n
-	if ids[0] == id {
-		n.Role = Leader
-		r.nodes[id] = n
-	}
-	return n, nil
+	return r.nodes[id], nil
 }
 
 func (r *MemoryRegistry) Leader() (Node, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
-	for _, n := range r.nodes {
-		if n.Role == Leader && n.LeaseUntil.After(now) {
-			return n, true
+	ids := make([]string, 0, len(r.nodes))
+	for id, n := range r.nodes {
+		if n.LeaseUntil.After(now) {
+			ids = append(ids, id)
+		} else {
+			delete(r.nodes, id)
 		}
 	}
-	return Node{}, false
+	if len(ids) == 0 {
+		return Node{}, false
+	}
+	sort.Strings(ids)
+	n := r.nodes[ids[0]]
+	n.Role = Leader
+	return n, true
 }
 func (r *MemoryRegistry) List() []Node {
 	r.mu.Lock()

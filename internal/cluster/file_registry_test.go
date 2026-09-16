@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -38,5 +39,24 @@ func TestFileRegistryTakesOverExpiredLeader(t *testing.T) {
 	leader, ok := r.Leader()
 	if !ok || leader.ID != "node-b" {
 		t.Fatalf("leader=%+v ok=%v", leader, ok)
+	}
+}
+
+func TestFileRegistryRemovesStaleLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster.json")
+	r, err := NewFileRegistry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := path + ".lock"
+	if err := os.WriteFile(lockPath, []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Renew("node-a", time.Second); err != nil {
+		t.Fatal(err)
 	}
 }

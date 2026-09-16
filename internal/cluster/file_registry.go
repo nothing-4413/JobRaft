@@ -49,7 +49,9 @@ func (r *FileRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 	n.ID, n.LastContact, n.LeaseUntil, n.Role = id, now, now.Add(ttl), Follower
 	nodes[id] = n
 	ids := make([]string, 0, len(nodes))
-	for key := range nodes {
+	for key, node := range nodes {
+		node.Role = Follower
+		nodes[key] = node
 		ids = append(ids, key)
 	}
 	sort.Strings(ids)
@@ -57,6 +59,9 @@ func (r *FileRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 		leader := nodes[ids[0]]
 		leader.Role = Leader
 		nodes[ids[0]] = leader
+	}
+	if node := nodes[id]; node.Role == Leader {
+		n.Role = Leader
 	}
 	if err := r.write(nodes); err != nil {
 		return Node{}, err
@@ -69,16 +74,21 @@ func (r *FileRegistry) Leader() (Node, bool) {
 	defer r.mu.Unlock()
 	nodes := r.read()
 	now := time.Now()
+	ids := make([]string, 0, len(nodes))
 	for id, n := range nodes {
 		if !n.LeaseUntil.After(now) {
 			delete(nodes, id)
 			continue
 		}
-		if n.Role == Leader && n.LeaseUntil.After(now) {
-			return n, true
-		}
+		ids = append(ids, id)
 	}
-	return Node{}, false
+	if len(ids) == 0 {
+		return Node{}, false
+	}
+	sort.Strings(ids)
+	n := nodes[ids[0]]
+	n.Role = Leader
+	return n, true
 }
 func (r *FileRegistry) List() []Node {
 	r.mu.Lock()
@@ -120,6 +130,10 @@ func (r *FileRegistry) lock() (func(), error) {
 		if err == nil {
 			f.Close()
 			return func() { _ = os.Remove(lockPath) }, nil
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
+			_ = os.Remove(lockPath)
+			continue
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
