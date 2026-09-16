@@ -29,11 +29,21 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/metrics", s.metrics)
 	mux.HandleFunc("/cluster", s.cluster)
+	mux.HandleFunc("/admin", s.admin)
 	mux.HandleFunc("/tasks", s.tasks)
 	mux.HandleFunc("/tasks/", s.taskByID)
 	mux.HandleFunc("/workers", s.workers)
 	mux.HandleFunc("/workers/", s.workerHeartbeat)
 	return mux
+}
+
+func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>JobRaft Admin</title><style>body{font:14px system-ui;margin:2rem;background:#f6f7f9;color:#17202a}h1{margin-bottom:.25rem}section{background:white;padding:1rem;margin:1rem 0;border-radius:8px;box-shadow:0 1px 4px #ccd}pre{white-space:pre-wrap;overflow:auto}</style></head><body><h1>JobRaft</h1><p>Live scheduler overview (auto-refreshes every 2 seconds)</p><section><h2>Cluster</h2><pre id="cluster">loading...</pre></section><section><h2>Workers</h2><pre id="workers">loading...</pre></section><section><h2>Tasks</h2><pre id="tasks">loading...</pre></section><section><h2>Metrics</h2><pre id="metrics">loading...</pre></section><script>async function load(){for(const [id,url] of [['cluster','/cluster'],['workers','/workers'],['tasks','/tasks']]){try{document.getElementById(id).textContent=JSON.stringify(await (await fetch(url)).json(),null,2)}catch(e){document.getElementById(id).textContent=e}}try{document.getElementById('metrics').textContent=await (await fetch('/metrics')).text()}catch(e){document.getElementById('metrics').textContent=e}}load();setInterval(load,2000)</script></body></html>`))
 }
 
 func (s *Server) cluster(w http.ResponseWriter, r *http.Request) {

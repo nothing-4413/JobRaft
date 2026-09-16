@@ -45,6 +45,7 @@ multi-process deployments.
 External workers can use `pkg/workerclient`'s `Client.Run` to handle the
 register/heartbeat/claim/complete loop without manually constructing HTTP
 requests.
+Open `GET /admin` in a browser for a lightweight live management dashboard.
 
 ## State machine
 
