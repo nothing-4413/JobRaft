@@ -272,6 +272,34 @@ func TestSchedulerCanRestartAfterStop(t *testing.T) {
 	}
 }
 
+func TestSchedulerCanRestartAfterContextCancellation(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	runs := 0
+	_ = s.Register("context-restart", func(context.Context, task.Task) error { runs++; return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for !s.stopped && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !s.stopped {
+		t.Fatal("scheduler did not observe context cancellation")
+	}
+	if err := s.Submit(task.Task{ID: "context-restart-1", Name: "context-restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	defer s.Stop()
+	deadline = time.Now().Add(time.Second)
+	for runs == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if runs == 0 {
+		t.Fatal("scheduler did not restart after context cancellation")
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

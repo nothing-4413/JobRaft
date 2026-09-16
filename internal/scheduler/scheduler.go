@@ -344,10 +344,6 @@ func (s *Scheduler) Stop() {
 	s.mu.Unlock()
 	cancel()
 	<-s.done
-	s.requeueRunningOnStop()
-	s.mu.Lock()
-	s.cancel = nil
-	s.mu.Unlock()
 }
 
 func (s *Scheduler) requeueRunningOnStop() {
@@ -369,7 +365,16 @@ func (s *Scheduler) requeueRunningOnStop() {
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
-	defer close(s.done)
+	defer func() {
+		// Context cancellation can happen without an explicit Stop call. Keep
+		// lifecycle state consistent and make interrupted work retryable.
+		s.requeueRunningOnStop()
+		s.mu.Lock()
+		s.stopped = true
+		s.cancel = nil
+		s.mu.Unlock()
+		close(s.done)
+	}()
 	for i := 0; i < s.workers; i++ {
 		go s.worker(ctx)
 	}
