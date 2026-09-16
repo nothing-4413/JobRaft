@@ -42,6 +42,7 @@ type Scheduler struct {
 	leaseTTL                                        time.Duration
 	maxPending                                      int
 	leaderGate                                      LeaderGate
+	stopped                                         bool
 	submitted, succeeded, failed, retried, canceled uint64
 }
 
@@ -317,10 +318,12 @@ func (s *Scheduler) Cancel(id string) error {
 
 func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Lock()
-	if s.cancel != nil {
+	if s.cancel != nil && !s.stopped {
 		s.mu.Unlock()
 		return
 	}
+	s.done = make(chan struct{})
+	s.stopped = false
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
 	for i := 0; i < s.workers; i++ {
@@ -333,13 +336,18 @@ func (s *Scheduler) Start(ctx context.Context) {
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
 	cancel := s.cancel
-	s.mu.Unlock()
-	if cancel == nil {
+	if cancel == nil || s.stopped {
+		s.mu.Unlock()
 		return
 	}
+	s.stopped = true
+	s.mu.Unlock()
 	cancel()
 	<-s.done
 	s.requeueRunningOnStop()
+	s.mu.Lock()
+	s.cancel = nil
+	s.mu.Unlock()
 }
 
 func (s *Scheduler) requeueRunningOnStop() {

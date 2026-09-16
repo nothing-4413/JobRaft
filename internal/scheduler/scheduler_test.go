@@ -242,6 +242,36 @@ func TestStopRequeuesRunningTasks(t *testing.T) {
 	}
 }
 
+func TestSchedulerCanRestartAfterStop(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	runs := 0
+	_ = s.Register("restart", func(context.Context, task.Task) error { runs++; return nil })
+	if err := s.Submit(task.Task{ID: "restart-1", Name: "restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	deadline := time.Now().Add(time.Second)
+	for runs == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.Stop()
+	if runs == 0 {
+		t.Fatal("task did not run before stop")
+	}
+	if err := s.Submit(task.Task{ID: "restart-2", Name: "restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	defer s.Stop()
+	deadline = time.Now().Add(time.Second)
+	for runs < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if runs < 2 {
+		t.Fatalf("scheduler did not restart, runs=%d", runs)
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})
