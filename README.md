@@ -61,6 +61,9 @@ Deployment settings:
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.
 
+GitHub Actions runs formatting, tests, and a full build on every push and pull
+request.
+
 ## State machine
 
 Tasks move from `pending` to `running`, then to `success`. A failed execution
