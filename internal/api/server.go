@@ -149,6 +149,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		ID        string           `json:"id"`
 		Name      string           `json:"name"`

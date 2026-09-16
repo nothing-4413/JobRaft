@@ -22,3 +22,21 @@ func TestFileRegistryElectsLeader(t *testing.T) {
 		t.Fatalf("leader=%+v ok=%v", leader, ok)
 	}
 }
+
+func TestFileRegistryTakesOverExpiredLeader(t *testing.T) {
+	r, err := NewFileRegistry(filepath.Join(t.TempDir(), "cluster.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Renew("node-a", 20*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, err = r.Renew("node-b", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	leader, ok := r.Leader()
+	if !ok || leader.ID != "node-b" {
+		t.Fatalf("leader=%+v ok=%v", leader, ok)
+	}
+}

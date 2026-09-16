@@ -67,7 +67,11 @@ func (r *FileRegistry) Leader() (Node, bool) {
 	defer r.mu.Unlock()
 	nodes := r.read()
 	now := time.Now()
-	for _, n := range nodes {
+	for id, n := range nodes {
+		if !n.LeaseUntil.After(now) {
+			delete(nodes, id)
+			continue
+		}
 		if n.Role == Leader && n.LeaseUntil.After(now) {
 			return n, true
 		}
@@ -78,9 +82,12 @@ func (r *FileRegistry) List() []Node {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nodes := r.read()
+	now := time.Now()
 	result := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
-		result = append(result, n)
+		if n.LeaseUntil.After(now) {
+			result = append(result, n)
+		}
 	}
 	return result
 }
