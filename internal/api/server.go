@@ -97,7 +97,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	workers := len(s.scheduler.Workers())
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "jobraft_tasks_submitted_total %d\njobraft_tasks_succeeded_total %d\njobraft_tasks_failed_total %d\njobraft_tasks_retried_total %d\njobraft_tasks_canceled_total %d\njobraft_tasks_pending %d\njobraft_tasks_running %d\njobraft_tasks_retrying %d\njobraft_workers_online %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled, pending, running, retrying, workers)
+	_, _ = fmt.Fprintf(w, "# TYPE jobraft_tasks_submitted_total counter\njobraft_tasks_submitted_total %d\n# TYPE jobraft_tasks_succeeded_total counter\njobraft_tasks_succeeded_total %d\n# TYPE jobraft_tasks_failed_total counter\njobraft_tasks_failed_total %d\n# TYPE jobraft_tasks_retried_total counter\njobraft_tasks_retried_total %d\n# TYPE jobraft_tasks_canceled_total counter\njobraft_tasks_canceled_total %d\n# TYPE jobraft_tasks_pending gauge\njobraft_tasks_pending %d\n# TYPE jobraft_tasks_running gauge\njobraft_tasks_running %d\n# TYPE jobraft_tasks_retrying gauge\njobraft_tasks_retrying %d\n# TYPE jobraft_workers_online gauge\njobraft_workers_online %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled, pending, running, retrying, workers)
 }
 
 func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
