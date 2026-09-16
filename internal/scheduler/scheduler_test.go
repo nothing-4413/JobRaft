@@ -222,6 +222,26 @@ func TestDispatchReservesTaskBeforeWorkerExecution(t *testing.T) {
 	}
 }
 
+func TestStopRequeuesRunningTasks(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	started := make(chan struct{})
+	_ = s.Register("blocking", func(ctx context.Context, t task.Task) error { close(started); <-ctx.Done(); return ctx.Err() })
+	if err := s.Submit(task.Task{ID: "stop-1", Name: "blocking", Retry: task.RetryPolicy{MaxAttempts: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start(context.Background())
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("task did not start")
+	}
+	s.Stop()
+	got, _ := s.Get("stop-1")
+	if got.Status != task.StatusRetrying {
+		t.Fatalf("status=%s", got.Status)
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

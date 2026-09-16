@@ -339,6 +339,25 @@ func (s *Scheduler) Stop() {
 	}
 	cancel()
 	<-s.done
+	s.requeueRunningOnStop()
+}
+
+func (s *Scheduler) requeueRunningOnStop() {
+	items, err := s.store.List()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, t := range items {
+		if t.Status != task.StatusRunning {
+			continue
+		}
+		t.Status = task.StatusRetrying
+		t.RunAt = now
+		t.LastError = "scheduler stopped while task was running"
+		t.WorkerID, t.LeaseUntil, t.LeaseToken = "", nil, ""
+		_ = s.store.Update(t)
+	}
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
