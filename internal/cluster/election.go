@@ -99,6 +99,7 @@ type Elector struct {
 	node     Node
 	stop     chan struct{}
 	done     chan struct{}
+	started  bool
 }
 
 func NewElector(reg Registry, id string, ttl time.Duration) (*Elector, error) {
@@ -107,7 +108,16 @@ func NewElector(reg Registry, id string, ttl time.Duration) (*Elector, error) {
 	}
 	return &Elector{registry: reg, id: id, ttl: ttl, stop: make(chan struct{}), done: make(chan struct{})}, nil
 }
-func (e *Elector) Start() { go e.loop() }
+func (e *Elector) Start() {
+	e.mu.Lock()
+	if e.started {
+		e.mu.Unlock()
+		return
+	}
+	e.started = true
+	e.mu.Unlock()
+	go e.loop()
+}
 func (e *Elector) loop() {
 	defer close(e.done)
 	ticker := time.NewTicker(e.ttl / 3)
@@ -131,6 +141,12 @@ func (e *Elector) renew() {
 	}
 }
 func (e *Elector) Stop() {
+	e.mu.RLock()
+	started := e.started
+	e.mu.RUnlock()
+	if !started {
+		return
+	}
 	select {
 	case <-e.stop:
 	default:

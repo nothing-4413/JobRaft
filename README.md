@@ -42,6 +42,10 @@ registry exposes the current node/leader through `GET /cluster`; the registry
 interface is designed to be replaced by a Raft-backed implementation for
 multi-process deployments.
 
+External workers can use `pkg/workerclient`'s `Client.Run` to handle the
+register/heartbeat/claim/complete loop without manually constructing HTTP
+requests.
+
 ## State machine
 
 Tasks move from `pending` to `running`, then to `success`. A failed execution
