@@ -95,6 +95,22 @@ func (r *FileRegistry) List() []Node {
 	defer r.mu.Unlock()
 	nodes := r.read()
 	now := time.Now()
+	ids := make([]string, 0, len(nodes))
+	for id, node := range nodes {
+		if node.LeaseUntil.After(now) {
+			node.Role = Follower
+			nodes[id] = node
+			ids = append(ids, id)
+		} else {
+			delete(nodes, id)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) > 0 {
+		node := nodes[ids[0]]
+		node.Role = Leader
+		nodes[ids[0]] = node
+	}
 	result := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.LeaseUntil.After(now) {

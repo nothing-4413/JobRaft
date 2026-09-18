@@ -38,6 +38,20 @@ func TestMemoryRegistryHasExactlyOneLeader(t *testing.T) {
 	}
 }
 
+func TestMemoryListRefreshesLeaderRole(t *testing.T) {
+	r := NewMemoryRegistry()
+	_, _ = r.Renew("node-b", time.Second)
+	_, _ = r.Renew("node-a", time.Second)
+	for _, node := range r.List() {
+		if node.ID == "node-a" && node.Role != Leader {
+			t.Fatalf("node-a role=%s", node.Role)
+		}
+		if node.ID == "node-b" && node.Role == Leader {
+			t.Fatal("node-b must not remain leader")
+		}
+	}
+}
+
 func TestElectorAcceptsSubMillisecondTTL(t *testing.T) {
 	e, err := NewElector(NewMemoryRegistry(), "node-a", time.Nanosecond)
 	if err != nil {

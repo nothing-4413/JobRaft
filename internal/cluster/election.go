@@ -91,6 +91,23 @@ func (r *MemoryRegistry) Leader() (Node, bool) {
 func (r *MemoryRegistry) List() []Node {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
+	ids := make([]string, 0, len(r.nodes))
+	for id, node := range r.nodes {
+		if node.LeaseUntil.After(now) {
+			node.Role = Follower
+			r.nodes[id] = node
+			ids = append(ids, id)
+		} else {
+			delete(r.nodes, id)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) > 0 {
+		node := r.nodes[ids[0]]
+		node.Role = Leader
+		r.nodes[ids[0]] = node
+	}
 	result := make([]Node, 0, len(r.nodes))
 	for _, n := range r.nodes {
 		result = append(result, n)

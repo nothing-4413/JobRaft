@@ -60,3 +60,20 @@ func TestFileRegistryRemovesStaleLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFileListRefreshesLeaderRole(t *testing.T) {
+	r, err := NewFileRegistry(filepath.Join(t.TempDir(), "cluster.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.Renew("node-b", time.Second)
+	_, _ = r.Renew("node-a", time.Second)
+	for _, node := range r.List() {
+		if node.ID == "node-a" && node.Role != Leader {
+			t.Fatalf("node-a role=%s", node.Role)
+		}
+		if node.ID == "node-b" && node.Role == Leader {
+			t.Fatal("node-b must not remain leader")
+		}
+	}
+}
