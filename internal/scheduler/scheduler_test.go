@@ -162,6 +162,27 @@ func TestExternalWorkerRenewsLease(t *testing.T) {
 	}
 }
 
+func TestExpiredWorkerCannotCompleteTask(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	s.SetLeaseTTL(5 * time.Millisecond)
+	if err := s.Submit(task.Task{ID: "expired-complete", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := s.RegisterWorker("worker-expired")
+	claimed, err := s.Claim(w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := s.CompleteTask(w.ID, claimed.ID, claimed.LeaseToken, ""); err == nil {
+		t.Fatal("expected expired lease completion to fail")
+	}
+	got, _ := s.Get(claimed.ID)
+	if got.Status != task.StatusRunning {
+		t.Fatalf("expired completion changed task status: %s", got.Status)
+	}
+}
+
 func TestScheduledTaskRunsAgain(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	count := 0

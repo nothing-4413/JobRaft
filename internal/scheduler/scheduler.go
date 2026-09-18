@@ -257,7 +257,7 @@ func (s *Scheduler) RenewTaskLease(workerID, id, token string) (task.Task, error
 	if err != nil {
 		return task.Task{}, err
 	}
-	if t.Status != task.StatusRunning || t.WorkerID != workerID || t.LeaseToken != token {
+	if !validLease(t, workerID, token, time.Now()) {
 		return task.Task{}, errors.New("invalid task lease")
 	}
 	until := time.Now().Add(s.leaseTTL)
@@ -273,7 +273,7 @@ func (s *Scheduler) CompleteTaskWithResult(workerID, id, token, failure string, 
 	if err != nil {
 		return err
 	}
-	if t.Status != task.StatusRunning || t.WorkerID != workerID || t.LeaseToken != token {
+	if !validLease(t, workerID, token, time.Now()) {
 		return errors.New("invalid task lease")
 	}
 	if failure != "" {
@@ -289,6 +289,10 @@ func (s *Scheduler) CompleteTaskWithResult(workerID, id, token, failure string, 
 	delete(s.running, id)
 	s.mu.Unlock()
 	return nil
+}
+
+func validLease(t task.Task, workerID, token string, now time.Time) bool {
+	return t.Status == task.StatusRunning && t.WorkerID == workerID && t.LeaseToken == token && t.LeaseUntil != nil && t.LeaseUntil.After(now)
 }
 
 func (s *Scheduler) workerHealthy(id string) bool {
