@@ -20,3 +20,30 @@ func TestMemoryStoreCopiesPayload(t *testing.T) {
 		t.Fatalf("store did not copy payload: %+v, %v", got, err)
 	}
 }
+
+func TestMemoryStoreConditionalLeaseUpdate(t *testing.T) {
+	s := NewMemory()
+	item := task.Task{ID: "lease", Name: "demo", RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}, Status: task.StatusRunning, LeaseToken: "token"}
+	if err := s.Create(item); err != nil {
+		t.Fatal(err)
+	}
+	item.LastError = "renewed"
+	if err := s.UpdateIfLease(item.ID, "wrong", item); err != ErrConflict {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	if err := s.UpdateIfLease(item.ID, item.LeaseToken, item); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(item.ID)
+	if got.LastError != "renewed" {
+		t.Fatalf("conditional update did not apply: %+v", got)
+	}
+	item.Status = task.StatusSuccess
+	if err := s.UpdateIfLease(item.ID, item.LeaseToken, item); err != nil {
+		t.Fatal(err)
+	}
+	item.LastError = "stale"
+	if err := s.UpdateIfLease(item.ID, item.LeaseToken, item); err != ErrConflict {
+		t.Fatalf("expected completed-task conflict, got %v", err)
+	}
+}

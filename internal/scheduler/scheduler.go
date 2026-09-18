@@ -95,7 +95,11 @@ func (s *Scheduler) Heartbeat(id string) (Worker, error) {
 	for _, t := range items {
 		if t.Status == task.StatusRunning && t.WorkerID == id {
 			t.LeaseUntil = timePtr(w.LeaseUntil)
-			_ = s.store.Update(t)
+			if updater, ok := s.store.(store.ConditionalUpdater); ok {
+				_ = updater.UpdateIfLease(t.ID, t.LeaseToken, t)
+			} else {
+				_ = s.store.Update(t)
+			}
 		}
 	}
 	return w, nil
