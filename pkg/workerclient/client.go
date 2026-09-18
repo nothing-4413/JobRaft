@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func (c *Client) Register(ctx context.Context) error {
 	return c.postJSON(ctx, "/workers", map[string]string{"id": c.WorkerID}, nil)
 }
 func (c *Client) Heartbeat(ctx context.Context) error {
-	return c.postJSON(ctx, "/workers/"+c.WorkerID, nil, nil)
+	return c.postJSON(ctx, "/workers/"+url.PathEscape(c.WorkerID), nil, nil)
 }
 
 func (c *Client) Claim(ctx context.Context) (task.Task, error) {
@@ -42,7 +43,7 @@ func (c *Client) Claim(ctx context.Context) (task.Task, error) {
 
 func (c *Client) ClaimWait(ctx context.Context, wait time.Duration) (task.Task, error) {
 	var t task.Task
-	path := "/workers/" + c.WorkerID + "/claim"
+	path := "/workers/" + url.PathEscape(c.WorkerID) + "/claim"
 	if wait > 0 {
 		path += "?wait=" + wait.String()
 	}
@@ -71,7 +72,7 @@ func (c *Client) Complete(ctx context.Context, t task.Task, err error) error {
 
 func (c *Client) RenewLease(ctx context.Context, t task.Task) (task.Task, error) {
 	var renewed task.Task
-	path := "/workers/" + c.WorkerID + "/tasks/renew?task=" + t.ID
+	path := "/workers/" + url.PathEscape(c.WorkerID) + "/tasks/renew?task=" + url.QueryEscape(t.ID)
 	if err := c.postJSON(ctx, path, map[string]string{"lease_token": t.LeaseToken}, &renewed); err != nil {
 		return renewed, err
 	}
@@ -86,7 +87,7 @@ func (c *Client) CompleteWithResult(ctx context.Context, t task.Task, err error,
 	if result != nil {
 		payload["result"] = json.RawMessage(result)
 	}
-	return c.postJSON(ctx, "/tasks/"+t.ID+"?complete=true", payload, nil)
+	return c.postJSON(ctx, "/tasks/"+url.PathEscape(t.ID)+"?complete=true", payload, nil)
 }
 
 func (c *Client) Run(ctx context.Context, handler Handler) error {

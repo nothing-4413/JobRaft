@@ -37,6 +37,32 @@ func TestClientClaimComplete(t *testing.T) {
 	}
 }
 
+func TestClientEscapesWorkerAndTaskIDs(t *testing.T) {
+	s := scheduler.New(store.NewMemory(), 1)
+	workerID := "worker/one"
+	taskID := "task/one"
+	if err := s.Submit(task.Task{ID: taskID, Name: "job", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(api.New(s).Handler())
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, WorkerID: workerID}
+	ctx := context.Background()
+	if err := c.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := c.Claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != taskID {
+		t.Fatalf("claimed wrong task: %+v", claimed)
+	}
+	if err := c.Complete(ctx, claimed, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientRenewsLease(t *testing.T) {
 	s := scheduler.New(store.NewMemory(), 1)
 	_ = s.Register("job", func(context.Context, task.Task) error { return nil })
