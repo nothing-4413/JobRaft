@@ -10,6 +10,7 @@ All request and response bodies use JSON unless noted otherwise.
   positive `limit`.
 - `GET /tasks/{id}`: inspect a task and its optional `result`.
 - `DELETE /tasks/{id}`: cancel a task.
+- `DELETE /tasks`: bulk cancel with `{ "ids": ["task-1", "task-2"] }`.
 - `POST /tasks/{id}?complete=true`: complete a claimed task with
   `worker_id`, `lease_token`, optional `error`, and optional `result`.
 

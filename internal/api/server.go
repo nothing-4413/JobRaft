@@ -215,6 +215,27 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids must be a non-empty array"})
+			return
+		}
+		result := make([]map[string]interface{}, 0, len(req.IDs))
+		for _, id := range req.IDs {
+			err := s.scheduler.Cancel(id)
+			item := map[string]interface{}{"id": id, "canceled": err == nil}
+			if err != nil {
+				item["error"] = err.Error()
+			}
+			result = append(result, item)
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if r.Method == http.MethodGet {
 		items, err := s.scheduler.List()
 		if err != nil {
@@ -245,7 +266,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "GET, "+http.MethodPost)
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
