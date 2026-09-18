@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,5 +76,46 @@ func TestFileListRefreshesLeaderRole(t *testing.T) {
 		if node.ID == "node-b" && node.Role == Leader {
 			t.Fatal("node-b must not remain leader")
 		}
+	}
+}
+
+func TestFileRegistryRejectsCorruptState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster.json")
+	if err := os.WriteFile(path, []byte("not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewFileRegistry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Renew("node-a", time.Second); err == nil {
+		t.Fatal("expected corrupt registry error")
+	}
+}
+
+func TestFileRegistryPersistsExpiredNodeCleanup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cluster.json")
+	old := time.Now().Add(-time.Minute)
+	state, _ := json.Marshal(map[string]Node{"expired": {ID: "expired", LeaseUntil: old}})
+	if err := os.WriteFile(path, state, 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewFileRegistry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Leader(); ok {
+		t.Fatal("expired node elected as leader")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nodes map[string]Node
+	if err := json.Unmarshal(b, &nodes); err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("expired node was not removed: %+v", nodes)
 	}
 }

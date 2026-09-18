@@ -3,12 +3,13 @@ package cluster
 import (
 	"encoding/json"
 	"errors"
-	"github.com/nothing-4413/JobRaft/internal/fileutil"
 	"io/ioutil"
 	"os"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/nothing-4413/JobRaft/internal/fileutil"
 )
 
 // FileRegistry coordinates nodes through a shared JSON file. An exclusive
@@ -37,7 +38,10 @@ func (r *FileRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 		return Node{}, err
 	}
 	defer unlock()
-	nodes := r.read()
+	nodes, err := r.read()
+	if err != nil {
+		return Node{}, err
+	}
 	now := time.Now()
 	for key, n := range nodes {
 		if !n.LeaseUntil.After(now) {
@@ -72,7 +76,15 @@ func (r *FileRegistry) Renew(id string, ttl time.Duration) (Node, error) {
 func (r *FileRegistry) Leader() (Node, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	nodes := r.read()
+	unlock, err := r.lock()
+	if err != nil {
+		return Node{}, false
+	}
+	defer unlock()
+	nodes, err := r.read()
+	if err != nil {
+		return Node{}, false
+	}
 	now := time.Now()
 	ids := make([]string, 0, len(nodes))
 	for id, n := range nodes {
@@ -83,17 +95,28 @@ func (r *FileRegistry) Leader() (Node, bool) {
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
+		_ = r.write(nodes)
 		return Node{}, false
 	}
 	sort.Strings(ids)
 	n := nodes[ids[0]]
 	n.Role = Leader
+	nodes[ids[0]] = n
+	_ = r.write(nodes)
 	return n, true
 }
 func (r *FileRegistry) List() []Node {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	nodes := r.read()
+	unlock, err := r.lock()
+	if err != nil {
+		return nil
+	}
+	defer unlock()
+	nodes, err := r.read()
+	if err != nil {
+		return nil
+	}
 	now := time.Now()
 	ids := make([]string, 0, len(nodes))
 	for id, node := range nodes {
@@ -111,6 +134,7 @@ func (r *FileRegistry) List() []Node {
 		node.Role = Leader
 		nodes[ids[0]] = node
 	}
+	_ = r.write(nodes)
 	result := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.LeaseUntil.After(now) {
@@ -120,13 +144,22 @@ func (r *FileRegistry) List() []Node {
 	return result
 }
 
-func (r *FileRegistry) read() map[string]Node {
+func (r *FileRegistry) read() (map[string]Node, error) {
 	result := make(map[string]Node)
 	b, err := ioutil.ReadFile(r.path)
-	if err == nil {
-		_ = json.Unmarshal(b, &result)
+	if os.IsNotExist(err) {
+		return result, nil
 	}
-	return result
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 {
+		return result, nil
+	}
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 func (r *FileRegistry) write(nodes map[string]Node) error {
 	b, err := json.MarshalIndent(nodes, "", "  ")
