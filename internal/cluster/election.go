@@ -127,7 +127,11 @@ func (e *Elector) Start() {
 }
 func (e *Elector) loop() {
 	defer close(e.done)
-	ticker := time.NewTicker(e.ttl / 3)
+	interval := e.ttl / 3
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	e.renew()
 	for {

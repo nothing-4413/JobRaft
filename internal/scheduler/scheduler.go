@@ -380,7 +380,11 @@ func (s *Scheduler) loop(ctx context.Context) {
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
-	heartbeatTicker := time.NewTicker(s.leaseTTL / 3)
+	heartbeatInterval := s.leaseTTL / 3
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = time.Millisecond
+	}
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	defer heartbeatTicker.Stop()
 	for {
 		select {

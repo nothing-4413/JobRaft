@@ -37,3 +37,12 @@ func TestMemoryRegistryHasExactlyOneLeader(t *testing.T) {
 		t.Fatalf("expected one leader, got %d: %+v", leaders, r.List())
 	}
 }
+
+func TestElectorAcceptsSubMillisecondTTL(t *testing.T) {
+	e, err := NewElector(NewMemoryRegistry(), "node-a", time.Nanosecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Start()
+	e.Stop()
+}

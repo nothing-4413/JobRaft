@@ -300,6 +300,13 @@ func TestSchedulerCanRestartAfterContextCancellation(t *testing.T) {
 	}
 }
 
+func TestSchedulerAcceptsSubMillisecondLeaseTTL(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	s.SetLeaseTTL(time.Nanosecond)
+	s.Start(context.Background())
+	s.Stop()
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})
