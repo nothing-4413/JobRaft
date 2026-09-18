@@ -319,6 +319,55 @@ func TestWorkersExcludesExpiredLeases(t *testing.T) {
 	}
 }
 
+func TestExpiredClaimCanBeReclaimed(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	s.SetLeaseTTL(5 * time.Millisecond)
+	if _, err := s.RegisterWorker("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Submit(task.Task{ID: "lease-reclaim", Name: "job", Retry: task.RetryPolicy{MaxAttempts: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim("worker-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, err := s.RegisterWorker("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	s.reapExpired()
+	reclaimed, err := s.Claim("worker-1")
+	if err != nil {
+		t.Fatalf("claim after lease recovery: %v", err)
+	}
+	if reclaimed.ID != claimed.ID || reclaimed.Attempts != 2 {
+		t.Fatalf("unexpected reclaimed task: %+v", reclaimed)
+	}
+}
+
+func TestCancelReleasesClaimReservation(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	if _, err := s.RegisterWorker("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Submit(task.Task{ID: "cancel-claim", Name: "job"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Claim("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Cancel("cancel-claim"); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	_, reserved := s.running["cancel-claim"]
+	s.mu.Unlock()
+	if reserved {
+		t.Fatal("canceled task remained reserved")
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

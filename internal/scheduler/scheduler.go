@@ -308,7 +308,10 @@ func (s *Scheduler) Cancel(id string) error {
 	}
 	s.mu.Lock()
 	if cancel, ok := s.running[id]; ok {
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
+		delete(s.running, id)
 	}
 	s.mu.Unlock()
 	now := time.Now()
@@ -580,6 +583,7 @@ func (s *Scheduler) reapExpired() {
 		if cancel, ok := s.running[t.ID]; ok && cancel != nil {
 			cancel()
 		}
+		delete(s.running, t.ID)
 		s.mu.Unlock()
 		t.Status, t.RunAt, t.WorkerID, t.LeaseUntil, t.LeaseToken = task.StatusRetrying, now, "", nil, ""
 		t.LastError = "worker lease expired"
