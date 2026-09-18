@@ -108,7 +108,10 @@ func (c *Client) Run(ctx context.Context, handler Handler) error {
 		}
 		t, err := c.ClaimWait(ctx, interval)
 		if err == nil {
-			runErr := handler(ctx, t)
+			runErr, leaseErr := c.runHandler(ctx, t, handler, interval)
+			if leaseErr != nil {
+				return leaseErr
+			}
 			if completeErr := c.Complete(ctx, t, runErr); completeErr != nil {
 				return completeErr
 			}
@@ -121,6 +124,44 @@ func (c *Client) Run(ctx context.Context, handler Handler) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+		}
+	}
+}
+
+// runHandler keeps a claimed task lease alive while user code is executing.
+// If renewal fails, the handler context is canceled and the task is left for
+// scheduler lease recovery rather than being acknowledged optimistically.
+func (c *Client) runHandler(ctx context.Context, t task.Task, handler Handler, fallback time.Duration) (error, error) {
+	interval := fallback
+	if t.LeaseUntil != nil {
+		remaining := time.Until(*t.LeaseUntil) / 3
+		if remaining > 0 && (interval <= 0 || remaining < interval) {
+			interval = remaining
+		}
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- handler(taskCtx, t) }()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return err, nil
+		case <-ticker.C:
+			if _, err := c.RenewLease(ctx, t); err != nil {
+				cancel()
+				<-done
+				return nil, err
+			}
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return nil, ctx.Err()
 		}
 	}
 }
