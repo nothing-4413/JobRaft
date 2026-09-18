@@ -307,6 +307,18 @@ func TestSchedulerAcceptsSubMillisecondLeaseTTL(t *testing.T) {
 	s.Stop()
 }
 
+func TestWorkersExcludesExpiredLeases(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	s.SetLeaseTTL(time.Millisecond)
+	if _, err := s.RegisterWorker("short-lived"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if workers := s.Workers(); len(workers) != 0 {
+		t.Fatalf("expired worker returned: %+v", workers)
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

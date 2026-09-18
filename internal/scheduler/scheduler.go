@@ -81,14 +81,15 @@ func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
 
 func (s *Scheduler) Heartbeat(id string) (Worker, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	w, ok := s.workersByID[id]
 	if !ok {
+		s.mu.Unlock()
 		return Worker{}, errors.New("worker not registered")
 	}
 	now := time.Now()
 	w.LastHeartbeat, w.LeaseUntil = now, now.Add(s.leaseTTL)
 	s.workersByID[id] = w
+	s.mu.Unlock()
 	// Renew leases for tasks owned by this worker as part of its heartbeat.
 	items, _ := s.store.List()
 	for _, t := range items {
@@ -103,9 +104,12 @@ func (s *Scheduler) Heartbeat(id string) (Worker, error) {
 func (s *Scheduler) Workers() []Worker {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	result := make([]Worker, 0, len(s.workersByID))
 	for _, w := range s.workersByID {
-		result = append(result, w)
+		if w.LeaseUntil.After(now) {
+			result = append(result, w)
+		}
 	}
 	return result
 }
