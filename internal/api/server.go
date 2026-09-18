@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,7 +221,27 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		statusFilter, nameFilter := r.URL.Query().Get("status"), r.URL.Query().Get("name")
+		filtered := items[:0]
+		for _, item := range items {
+			if statusFilter != "" && string(item.Status) != statusFilter {
+				continue
+			}
+			if nameFilter != "" && item.Name != nameFilter {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		limit := 0
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		if limit > 0 && len(filtered) > limit {
+			filtered = filtered[:limit]
+		}
+		writeJSON(w, http.StatusOK, filtered)
 		return
 	}
 	if r.Method != http.MethodPost {

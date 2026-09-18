@@ -6,7 +6,8 @@ All request and response bodies use JSON unless noted otherwise.
 
 - `POST /tasks`: create a task. Fields include `name`, `payload`, `delay` or
   `run_at`, `timeout`, `schedule`, `priority`, `depends_on`, and `retry`.
-- `GET /tasks`: list tasks.
+- `GET /tasks`: list tasks. Optional query parameters: `status`, `name`, and
+  positive `limit`.
 - `GET /tasks/{id}`: inspect a task and its optional `result`.
 - `DELETE /tasks/{id}`: cancel a task.
 - `POST /tasks/{id}?complete=true`: complete a claimed task with
