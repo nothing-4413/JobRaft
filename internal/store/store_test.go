@@ -47,3 +47,22 @@ func TestMemoryStoreConditionalLeaseUpdate(t *testing.T) {
 		t.Fatalf("expected completed-task conflict, got %v", err)
 	}
 }
+
+func TestMemoryStoreConditionalStateUpdate(t *testing.T) {
+	s := NewMemory()
+	item := task.Task{ID: "state", Name: "demo", RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}, Status: task.StatusPending}
+	if err := s.Create(item); err != nil {
+		t.Fatal(err)
+	}
+	item.Status = task.StatusCanceled
+	if err := s.UpdateIfState(item.ID, task.StatusRunning, "", item); err != ErrConflict {
+		t.Fatalf("expected state conflict, got %v", err)
+	}
+	if err := s.UpdateIfState(item.ID, task.StatusPending, "", item); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(item.ID)
+	if got.Status != task.StatusCanceled {
+		t.Fatalf("conditional state update did not apply: %s", got.Status)
+	}
+}

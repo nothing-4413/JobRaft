@@ -102,6 +102,23 @@ func (s *FileStore) UpdateIfLease(id, token string, t task.Task) error {
 	return s.saveLocked()
 }
 
+func (s *FileStore) UpdateIfState(id string, status task.Status, token string, t task.Task) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.tasks[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if current.Status != status || current.LeaseToken != token {
+		return ErrConflict
+	}
+	s.tasks[id] = clone(t)
+	return s.saveLocked()
+}
+
 func (s *FileStore) saveLocked() error {
 	b, err := json.MarshalIndent(s.tasks, "", "  ")
 	if err != nil {

@@ -266,8 +266,14 @@ func (s *Scheduler) RenewTaskLease(workerID, id, token string) (task.Task, error
 	}
 	until := time.Now().Add(s.leaseTTL)
 	t.LeaseUntil = &until
-	if err := s.store.Update(t); err != nil {
-		return task.Task{}, err
+	var updateErr error
+	if updater, ok := s.store.(store.ConditionalUpdater); ok {
+		updateErr = updater.UpdateIfLease(t.ID, token, t)
+	} else {
+		updateErr = s.store.Update(t)
+	}
+	if updateErr != nil {
+		return task.Task{}, updateErr
 	}
 	return t, nil
 }
@@ -288,7 +294,9 @@ func (s *Scheduler) CompleteTaskWithResult(workerID, id, token, failure string, 
 	if err == nil {
 		t.Result = append([]byte(nil), result...)
 	}
-	s.finish(t, err)
+	if err := s.finish(t, err); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	delete(s.running, id)
 	s.mu.Unlock()
@@ -323,8 +331,13 @@ func (s *Scheduler) Cancel(id string) error {
 	}
 	s.mu.Unlock()
 	now := time.Now()
+	expectedStatus, expectedToken := t.Status, t.LeaseToken
 	t.Status, t.LastError, t.FinishedAt = task.StatusCanceled, task.ErrCanceled.Error(), &now
-	err = s.store.Update(t)
+	if updater, ok := s.store.(store.ConditionalUpdater); ok {
+		err = updater.UpdateIfState(id, expectedStatus, expectedToken, t)
+	} else {
+		err = s.store.Update(t)
+	}
 	if err == nil {
 		atomic.AddUint64(&s.canceled, 1)
 	}
@@ -534,12 +547,14 @@ func (s *Scheduler) execute(parent context.Context, t task.Task) {
 	s.finish(current, err)
 }
 
-func (s *Scheduler) finish(current task.Task, err error) {
+func (s *Scheduler) finish(current task.Task, runErr error) error {
+	expectedToken := current.LeaseToken
+	metric := ""
 	now := time.Now()
 	current.RunCount++
 	current.FinishedAt = &now
 	current.LeaseUntil, current.WorkerID, current.LeaseToken = nil, "", ""
-	if err == nil {
+	if runErr == nil {
 		current.LastError = ""
 		if current.Schedule > 0 {
 			current.Status, current.RunAt, current.FinishedAt = task.StatusPending, now.Add(current.Schedule), nil
@@ -548,18 +563,35 @@ func (s *Scheduler) finish(current task.Task, err error) {
 		} else {
 			current.Status = task.StatusSuccess
 		}
-		atomic.AddUint64(&s.succeeded, 1)
+		metric = "succeeded"
 	} else if current.Attempts < current.Retry.MaxAttempts {
 		current.Status = task.StatusRetrying
-		current.LastError = err.Error()
+		current.LastError = runErr.Error()
 		current.RunAt = now.Add(current.Retry.Backoff)
 		current.FinishedAt = nil
-		atomic.AddUint64(&s.retried, 1)
+		metric = "retried"
 	} else {
-		current.Status, current.LastError = task.StatusFailed, err.Error()
+		current.Status, current.LastError = task.StatusFailed, runErr.Error()
+		metric = "failed"
+	}
+	var updateErr error
+	if updater, ok := s.store.(store.ConditionalUpdater); ok {
+		updateErr = updater.UpdateIfState(current.ID, task.StatusRunning, expectedToken, current)
+	} else {
+		updateErr = s.store.Update(current)
+	}
+	if updateErr != nil {
+		return updateErr
+	}
+	switch metric {
+	case "succeeded":
+		atomic.AddUint64(&s.succeeded, 1)
+	case "retried":
+		atomic.AddUint64(&s.retried, 1)
+	case "failed":
 		atomic.AddUint64(&s.failed, 1)
 	}
-	_ = s.store.Update(current)
+	return nil
 }
 
 func (s *Scheduler) pickWorker() string {

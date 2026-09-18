@@ -389,6 +389,28 @@ func TestCancelReleasesClaimReservation(t *testing.T) {
 	}
 }
 
+func TestCancelAndCompleteDoNotOverwriteEachOther(t *testing.T) {
+	s := New(store.NewMemory(), 1)
+	if err := s.Submit(task.Task{ID: "race", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := s.RegisterWorker("race-worker")
+	claimed, err := s.Claim(w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Cancel(claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteTask(w.ID, claimed.ID, claimed.LeaseToken, ""); err == nil {
+		t.Fatal("stale completion unexpectedly succeeded")
+	}
+	got, _ := s.Get(claimed.ID)
+	if got.Status != task.StatusCanceled {
+		t.Fatalf("stale completion overwrote cancellation: %s", got.Status)
+	}
+}
+
 func TestSubmitRejectsMissingDependency(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	err := s.Submit(task.Task{ID: "child", Name: "x", DependsOn: []string{"missing"}, Retry: task.RetryPolicy{MaxAttempts: 1}})

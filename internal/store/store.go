@@ -24,6 +24,7 @@ type Store interface {
 // matches the expected value.
 type ConditionalUpdater interface {
 	UpdateIfLease(string, string, task.Task) error
+	UpdateIfState(string, task.Status, string, task.Task) error
 }
 
 // MemoryStore is a simple in-process store useful for development and tests.
@@ -91,6 +92,23 @@ func (s *MemoryStore) UpdateIfLease(id, token string, t task.Task) error {
 		return ErrNotFound
 	}
 	if current.Status != task.StatusRunning || current.LeaseToken != token {
+		return ErrConflict
+	}
+	s.tasks[id] = clone(t)
+	return nil
+}
+
+func (s *MemoryStore) UpdateIfState(id string, status task.Status, token string, t task.Task) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.tasks[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if current.Status != status || current.LeaseToken != token {
 		return ErrConflict
 	}
 	s.tasks[id] = clone(t)
