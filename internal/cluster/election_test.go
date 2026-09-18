@@ -60,3 +60,21 @@ func TestElectorAcceptsSubMillisecondTTL(t *testing.T) {
 	e.Start()
 	e.Stop()
 }
+
+func TestElectorCanRestartAfterStop(t *testing.T) {
+	e, err := NewElector(NewMemoryRegistry(), "node-a", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Start()
+	e.Stop()
+	e.Start()
+	defer e.Stop()
+	deadline := time.Now().Add(time.Second)
+	for !e.IsLeader() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !e.IsLeader() {
+		t.Fatal("elector did not resume after restart")
+	}
+}

@@ -86,6 +86,7 @@ func (r *MemoryRegistry) Leader() (Node, bool) {
 	sort.Strings(ids)
 	n := r.nodes[ids[0]]
 	n.Role = Leader
+	r.nodes[ids[0]] = n
 	return n, true
 }
 func (r *MemoryRegistry) List() []Node {
@@ -138,12 +139,19 @@ func (e *Elector) Start() {
 		e.mu.Unlock()
 		return
 	}
+	e.stop = make(chan struct{})
+	e.done = make(chan struct{})
 	e.started = true
 	e.mu.Unlock()
 	go e.loop()
 }
 func (e *Elector) loop() {
-	defer close(e.done)
+	defer func() {
+		e.mu.Lock()
+		e.started = false
+		close(e.done)
+		e.mu.Unlock()
+	}()
 	interval := e.ttl / 3
 	if interval <= 0 {
 		interval = time.Millisecond
