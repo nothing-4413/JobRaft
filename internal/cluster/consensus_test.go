@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -9,6 +10,11 @@ type memoryMachine struct{ entries []LogEntry }
 
 func (m *memoryMachine) Apply(e LogEntry) error    { m.entries = append(m.entries, e); return nil }
 func (m *memoryMachine) Snapshot() ([]byte, error) { return []byte("snapshot"), nil }
+
+type failingMachine struct{}
+
+func (failingMachine) Apply(LogEntry) error      { return errors.New("unavailable") }
+func (failingMachine) Snapshot() ([]byte, error) { return nil, nil }
 
 func TestConsensusReplicatesToQuorum(t *testing.T) {
 	r := NewConsensusRegistry()
@@ -39,5 +45,18 @@ func TestConsensusRejectsFollowerApply(t *testing.T) {
 	_ = b.Renew(time.Second)
 	if _, err := b.Apply([]byte("write")); err == nil {
 		t.Fatal("expected follower apply to fail")
+	}
+}
+
+func TestConsensusDoesNotCommitWithoutQuorum(t *testing.T) {
+	r := NewConsensusRegistry()
+	a, _ := r.Join("jobs", "a", &memoryMachine{})
+	_, _ = r.Join("jobs", "b", failingMachine{})
+	_ = a.Renew(time.Second)
+	if _, err := a.Apply([]byte("write")); err == nil {
+		t.Fatal("expected quorum error")
+	}
+	if a.CommitIndex() != 0 || len(a.Log()) != 0 {
+		t.Fatalf("uncommitted entry leaked: index=%d log=%d", a.CommitIndex(), len(a.Log()))
 	}
 }

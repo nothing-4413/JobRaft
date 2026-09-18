@@ -102,19 +102,21 @@ func (g *ConsensusGroup) Apply(command []byte) (LogEntry, error) {
 	members := g.registry.members(g.GroupName())
 	g.term++
 	entry := LogEntry{Term: g.term, Index: g.commit + 1, Command: append([]byte(nil), command...), CommittedAt: time.Now()}
-	applied := 0
+	applied := make([]*ConsensusGroup, 0, len(members))
 	for _, m := range members {
 		if err := m.machine.Apply(entry); err == nil {
-			m.mu.Lock()
-			m.log = append(m.log, entry)
-			m.commit = entry.Index
-			m.term = entry.Term
-			m.mu.Unlock()
-			applied++
+			applied = append(applied, m)
 		}
 	}
-	if applied*2 <= len(members) {
+	if len(applied)*2 <= len(members) {
 		return LogEntry{}, errors.New("quorum unavailable")
+	}
+	for _, m := range applied {
+		m.mu.Lock()
+		m.log = append(m.log, entry)
+		m.commit = entry.Index
+		m.term = entry.Term
+		m.mu.Unlock()
 	}
 	return entry, nil
 }
