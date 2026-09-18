@@ -62,6 +62,9 @@ func (t Task) Validate() error {
 	if t.Retry.MaxAttempts < 1 {
 		return ErrInvalidTask
 	}
+	if t.Retry.Backoff < 0 || t.Timeout < 0 || t.Schedule < 0 || t.Attempts < 0 || t.RunCount < 0 {
+		return ErrInvalidTask
+	}
 	if t.RunAt.IsZero() {
 		return ErrInvalidTask
 	}
