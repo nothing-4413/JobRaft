@@ -58,6 +58,9 @@ func TestClientEscapesWorkerAndTaskIDs(t *testing.T) {
 	if claimed.ID != taskID {
 		t.Fatalf("claimed wrong task: %+v", claimed)
 	}
+	if _, err := c.RenewLease(ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
 	if err := c.Complete(ctx, claimed, nil); err != nil {
 		t.Fatal(err)
 	}

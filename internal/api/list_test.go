@@ -25,3 +25,13 @@ func TestTaskListFilters(t *testing.T) {
 		t.Fatalf("response=%s", w.Body.String())
 	}
 }
+
+func TestTaskListRejectsInvalidLimit(t *testing.T) {
+	s := scheduler.New(store.NewMemory(), 1)
+	r := httptest.NewRequest("GET", "/tasks?limit=bad", nil)
+	w := httptest.NewRecorder()
+	New(s).Handler().ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -138,7 +139,11 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/workers/")
+	id, err := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/workers/"))
+	if err != nil || id == "" {
+		http.NotFound(w, r)
+		return
+	}
 	wkr, err := s.scheduler.Heartbeat(id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -152,8 +157,13 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/workers/"), "/")
+	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/workers/"), "/")
 	if len(parts) != 3 || parts[1] != "tasks" || parts[2] != "renew" {
+		http.NotFound(w, r)
+		return
+	}
+	workerID, err := url.PathUnescape(parts[0])
+	if err != nil || workerID == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -164,7 +174,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	t, err := s.scheduler.RenewTaskLease(parts[0], r.URL.Query().Get("task"), req.LeaseToken)
+	t, err := s.scheduler.RenewTaskLease(workerID, r.URL.Query().Get("task"), req.LeaseToken)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -177,7 +187,11 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/workers/"), "/claim")
+	path, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(r.URL.EscapedPath(), "/workers/"), "/claim"))
+	if err != nil || path == "" {
+		http.NotFound(w, r)
+		return
+	}
 	wait := r.URL.Query().Get("wait")
 	deadline := time.Now()
 	if wait != "" {
@@ -186,7 +200,6 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var t task.Task
-	var err error
 	for {
 		t, err = s.scheduler.Claim(path)
 		if err == nil {
@@ -255,9 +268,12 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		}
 		limit := 0
 		if raw := r.URL.Query().Get("limit"); raw != "" {
-			if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
-				limit = parsed
+			parsed, parseErr := strconv.Atoi(raw)
+			if parseErr != nil || parsed < 1 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+				return
 			}
+			limit = parsed
 		}
 		if limit > 0 && len(filtered) > limit {
 			filtered = filtered[:limit]
@@ -310,8 +326,8 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) taskByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/tasks/")
-	if id == "" {
+	id, err := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/tasks/"))
+	if err != nil || id == "" {
 		http.NotFound(w, r)
 		return
 	}
