@@ -83,6 +83,9 @@ Deployment settings:
 - `JOBRAFT_API_TOKEN` (optional bearer/API key for management and worker APIs;
   `/healthz` and `/readyz` remain public for probes)
 
+Invalid values for numeric, duration, storage, or cluster settings fail startup
+instead of silently falling back to an unsafe or unexpected mode.
+
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.
 

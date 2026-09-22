@@ -24,24 +24,30 @@ func main() {
 		if persisted, err := store.NewFile(filepath.Clean(path)); err == nil {
 			st = persisted
 		} else {
-			log.Printf("file store unavailable, using memory: %v", err)
+			log.Fatalf("file store unavailable: %v", err)
 		}
 	}
 	workers := 4
 	if value := os.Getenv("JOBRAFT_WORKERS"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
-			workers = parsed
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 {
+			log.Fatalf("JOBRAFT_WORKERS must be a positive integer")
 		}
+		workers = parsed
 	}
 	sch := scheduler.New(st, workers)
 	if value := os.Getenv("JOBRAFT_MAX_PENDING"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
 			sch.SetMaxPending(parsed)
+		} else {
+			log.Fatalf("JOBRAFT_MAX_PENDING must be a positive integer")
 		}
 	}
 	if value := os.Getenv("JOBRAFT_LEASE_TTL"); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
 			sch.SetLeaseTTL(parsed)
+		} else {
+			log.Fatalf("JOBRAFT_LEASE_TTL must be a valid duration: %v", err)
 		}
 	}
 	_ = sch.Register("echo", func(ctx context.Context, t task.Task) error { return nil })
@@ -63,10 +69,14 @@ func main() {
 			if shared, err := cluster.NewFileRegistry(filepath.Clean(path)); err == nil {
 				registry = shared
 			} else {
-				log.Printf("cluster file unavailable, using memory: %v", err)
+				log.Fatalf("cluster file unavailable: %v", err)
 			}
 		}
-		elector, _ = cluster.NewElector(registry, nodeID, 10*time.Second)
+		var err error
+		elector, err = cluster.NewElector(registry, nodeID, 10*time.Second)
+		if err != nil {
+			log.Fatalf("cluster election setup failed: %v", err)
+		}
 		elector.Start()
 		defer elector.Stop()
 		sch.SetLeaderGate(elector)
