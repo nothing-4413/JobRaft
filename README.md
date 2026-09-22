@@ -4,6 +4,11 @@ JobRaft is a small Go workflow/task scheduler built in stages. The first stage
 contains an embeddable scheduler and an HTTP API with delayed execution,
 timeouts, cancellation, retries, and task status inspection.
 
+The project deliberately focuses on scheduling correctness, delivery semantics,
+leases, persistence, and coordination. It is not intended to become a general
+business platform or a feature-heavy frontend; those concerns stay outside the
+core so the implementation remains useful as a technical systems project.
+
 ## Run
 
 ```bash
@@ -72,9 +77,15 @@ Deployment settings:
 - `JOBRAFT_CLUSTER_FILE` (optional shared registry file for multi-process leader election)
 - `JOBRAFT_MAX_PENDING` (optional in-flight task limit)
 - `JOBRAFT_LEASE_TTL` (optional worker/task lease duration, e.g. `30s`)
+- `JOBRAFT_API_TOKEN` (optional bearer/API key for management and worker APIs;
+  `/healthz` and `/readyz` remain public for probes)
 
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.
+
+For a deployed instance, set `JOBRAFT_API_TOKEN` and send either
+`Authorization: Bearer <token>` or `X-API-Key: <token>`. The empty-token mode is
+intended only for local development.
 
 GitHub Actions runs formatting, tests, and a full build on every push and pull
 request.

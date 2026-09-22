@@ -2,10 +2,17 @@
 
 All request and response bodies use JSON unless noted otherwise.
 
+When `JOBRAFT_API_TOKEN` is configured, send either
+`Authorization: Bearer <token>` or `X-API-Key: <token>` on all endpoints except
+`/healthz` and `/readyz`. Authentication is disabled only when the variable is
+empty, which is intended for local development.
+
 ## Tasks
 
 - `POST /tasks`: create a task. Fields include `name`, `payload`, `delay` or
   `run_at`, `timeout`, `schedule`, `priority`, `depends_on`, and `retry`.
+  Duration fields use Go duration values encoded as nanoseconds in JSON (for
+  example, `1000000000` is one second).
 - `GET /tasks`: list tasks. Optional query parameters: `status`, `name`, and
   positive `limit`.
 - `GET /tasks/{id}`: inspect a task and its optional `result`.

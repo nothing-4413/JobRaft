@@ -20,8 +20,10 @@ var ErrNoTask = errors.New("no task available")
 
 type Client struct {
 	BaseURL, WorkerID string
-	HTTPClient        *http.Client
-	PollInterval      time.Duration
+	// APIToken is sent as a bearer token when the server enables authentication.
+	APIToken     string
+	HTTPClient   *http.Client
+	PollInterval time.Duration
 }
 
 func (c *Client) client() *http.Client {
@@ -50,6 +52,9 @@ func (c *Client) ClaimWait(ctx context.Context, wait time.Duration) (task.Task, 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, nil)
 	if err != nil {
 		return t, err
+	}
+	if c.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIToken)
 	}
 	resp, err := c.client().Do(req)
 	if err != nil {
@@ -181,6 +186,9 @@ func (c *Client) postJSON(ctx context.Context, path string, body interface{}, ou
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIToken)
+	}
 	resp, err := c.client().Do(req)
 	if err != nil {
 		return err

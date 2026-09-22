@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,11 +18,22 @@ import (
 type Server struct {
 	scheduler *scheduler.Scheduler
 	registry  cluster.Registry
+	token     string
 }
 
 func New(s *scheduler.Scheduler) *Server { return &Server{scheduler: s} }
 func NewWithCluster(s *scheduler.Scheduler, r cluster.Registry) *Server {
 	return &Server{scheduler: s, registry: r}
+}
+
+// NewWithToken enables bearer/API-key authentication for management and worker
+// endpoints. An empty token keeps the local development mode unauthenticated.
+func NewWithToken(s *scheduler.Scheduler, token string) *Server {
+	return &Server{scheduler: s, token: token}
+}
+
+func NewWithClusterToken(s *scheduler.Scheduler, r cluster.Registry, token string) *Server {
+	return &Server{scheduler: s, registry: r, token: token}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -37,7 +49,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/tasks/", s.taskByID)
 	mux.HandleFunc("/workers", s.workers)
 	mux.HandleFunc("/workers/", s.workerHeartbeat)
-	return mux
+	if s.token == "" {
+		return mux
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Health probes remain public so a load balancer can determine whether
+		// the process is alive without holding application credentials.
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		provided := r.Header.Get("X-API-Key")
+		if provided == "" {
+			provided = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +143,7 @@ func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		ID string `json:"id"`
 	}
@@ -127,11 +160,12 @@ func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(r.URL.Path, "/claim") {
+	escapedPath := r.URL.EscapedPath()
+	if strings.HasSuffix(escapedPath, "/claim") {
 		s.workerClaim(w, r)
 		return
 	}
-	if strings.HasSuffix(r.URL.Path, "/renew") {
+	if strings.HasSuffix(escapedPath, "/renew") {
 		s.workerRenew(w, r)
 		return
 	}
@@ -139,6 +173,7 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	id, err := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/workers/"))
 	if err != nil || id == "" {
 		http.NotFound(w, r)
@@ -157,6 +192,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/workers/"), "/")
 	if len(parts) != 3 || parts[1] != "tasks" || parts[2] != "renew" {
 		http.NotFound(w, r)
@@ -256,6 +292,10 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		statusFilter, nameFilter := r.URL.Query().Get("status"), r.URL.Query().Get("name")
+		if statusFilter != "" && !validStatus(statusFilter) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status filter"})
+			return
+		}
 		filtered := items[:0]
 		for _, item := range items {
 			if statusFilter != "" && string(item.Status) != statusFilter {
@@ -325,6 +365,15 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, created)
 }
 
+func validStatus(value string) bool {
+	switch task.Status(value) {
+	case task.StatusPending, task.StatusRunning, task.StatusSuccess, task.StatusFailed, task.StatusRetrying, task.StatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) taskByID(w http.ResponseWriter, r *http.Request) {
 	id, err := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/tasks/"))
 	if err != nil || id == "" {
@@ -340,6 +389,7 @@ func (s *Server) taskByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Query().Get("complete") == "true" {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req struct {
 			WorkerID   string          `json:"worker_id"`
 			LeaseToken string          `json:"lease_token"`

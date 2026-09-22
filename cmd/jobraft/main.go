@@ -51,7 +51,11 @@ func main() {
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	sch.Start(ctx)
-	apiServer := api.New(sch)
+	apiToken := os.Getenv("JOBRAFT_API_TOKEN")
+	if apiToken == "" {
+		log.Printf("warning: JOBRAFT_API_TOKEN is unset; API authentication is disabled")
+	}
+	apiServer := api.NewWithToken(sch, apiToken)
 	var elector *cluster.Elector
 	if nodeID := os.Getenv("JOBRAFT_NODE_ID"); nodeID != "" {
 		var registry cluster.Registry = cluster.NewMemoryRegistry()
@@ -66,7 +70,7 @@ func main() {
 		elector.Start()
 		defer elector.Stop()
 		sch.SetLeaderGate(elector)
-		apiServer = api.NewWithCluster(sch, registry)
+		apiServer = api.NewWithClusterToken(sch, registry, apiToken)
 	}
 	addr := os.Getenv("JOBRAFT_ADDR")
 	if addr == "" {
