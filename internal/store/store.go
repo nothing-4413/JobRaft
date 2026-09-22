@@ -11,6 +11,7 @@ import (
 
 var ErrNotFound = errors.New("task not found")
 var ErrConflict = errors.New("task changed since it was read")
+var ErrDuplicateIdempotencyKey = errors.New("idempotency key already exists")
 
 // Store persists task metadata. Implementations must be safe for concurrent use.
 type Store interface {
@@ -41,11 +42,29 @@ func (s *MemoryStore) Create(t task.Task) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if t.IdempotencyKey != "" {
+		for _, existing := range s.tasks {
+			if existing.IdempotencyKey == t.IdempotencyKey {
+				return ErrDuplicateIdempotencyKey
+			}
+		}
+	}
 	if _, ok := s.tasks[t.ID]; ok {
 		return errors.New("task already exists")
 	}
 	s.tasks[t.ID] = clone(t)
 	return nil
+}
+
+func (s *MemoryStore) GetByIdempotencyKey(key string) (task.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.tasks {
+		if t.IdempotencyKey == key {
+			return clone(t), nil
+		}
+	}
+	return task.Task{}, ErrNotFound
 }
 
 func (s *MemoryStore) Get(id string) (task.Task, error) {

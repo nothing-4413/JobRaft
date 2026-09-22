@@ -129,6 +129,11 @@ func (s *Scheduler) Register(name string, h Handler) error {
 }
 
 func (s *Scheduler) Submit(t task.Task) error {
+	if t.IdempotencyKey != "" {
+		if existing, err := s.FindByIdempotencyKey(t.IdempotencyKey); err == nil {
+			return fmt.Errorf("duplicate task %s: %w", existing.ID, store.ErrDuplicateIdempotencyKey)
+		}
+	}
 	if s.maxPending > 0 {
 		items, err := s.store.List()
 		if err != nil {
@@ -175,6 +180,28 @@ func (s *Scheduler) Submit(t task.Task) error {
 		atomic.AddUint64(&s.submitted, 1)
 	}
 	return err
+}
+
+// FindByIdempotencyKey returns the task previously accepted for a retry key.
+func (s *Scheduler) FindByIdempotencyKey(key string) (task.Task, error) {
+	if key == "" {
+		return task.Task{}, store.ErrNotFound
+	}
+	if finder, ok := s.store.(interface {
+		GetByIdempotencyKey(string) (task.Task, error)
+	}); ok {
+		return finder.GetByIdempotencyKey(key)
+	}
+	items, err := s.store.List()
+	if err != nil {
+		return task.Task{}, err
+	}
+	for _, item := range items {
+		if item.IdempotencyKey == key {
+			return item, nil
+		}
+	}
+	return task.Task{}, store.ErrNotFound
 }
 
 func (s *Scheduler) dependsOn(id, target string, seen map[string]bool) bool {

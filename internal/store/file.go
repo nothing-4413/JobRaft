@@ -45,11 +45,29 @@ func (s *FileStore) Create(t task.Task) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if t.IdempotencyKey != "" {
+		for _, existing := range s.tasks {
+			if existing.IdempotencyKey == t.IdempotencyKey {
+				return ErrDuplicateIdempotencyKey
+			}
+		}
+	}
 	if _, ok := s.tasks[t.ID]; ok {
 		return os.ErrExist
 	}
 	s.tasks[t.ID] = clone(t)
 	return s.saveLocked()
+}
+
+func (s *FileStore) GetByIdempotencyKey(key string) (task.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.tasks {
+		if t.IdempotencyKey == key {
+			return clone(t), nil
+		}
+	}
+	return task.Task{}, ErrNotFound
 }
 
 func (s *FileStore) Get(id string) (task.Task, error) {

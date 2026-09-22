@@ -13,6 +13,8 @@ empty, which is intended for local development.
   `run_at`, `timeout`, `schedule`, `priority`, `depends_on`, and `retry`.
   Duration fields use Go duration values encoded as nanoseconds in JSON (for
   example, `1000000000` is one second).
+  Send `Idempotency-Key` to make retries safe; a repeated key returns the
+  original task with HTTP 200 instead of creating a duplicate.
 - `GET /tasks`: list tasks. Optional query parameters: `status`, `name`, and
   positive `limit`.
 - `GET /tasks/{id}`: inspect a task and its optional `result`.

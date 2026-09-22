@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/nothing-4413/JobRaft/internal/cluster"
 	"github.com/nothing-4413/JobRaft/internal/scheduler"
+	"github.com/nothing-4413/JobRaft/internal/store"
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
 
@@ -349,11 +351,21 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	} else if req.Delay > 0 {
 		runAt = runAt.Add(req.Delay)
 	}
-	t := task.Task{ID: req.ID, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
+	}
+	t := task.Task{ID: req.ID, IdempotencyKey: idempotencyKey, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
 	if err := s.scheduler.Submit(t); err != nil {
+		if idempotencyKey != "" && errors.Is(err, store.ErrDuplicateIdempotencyKey) {
+			if existing, findErr := s.scheduler.FindByIdempotencyKey(idempotencyKey); findErr == nil {
+				writeJSON(w, http.StatusOK, existing)
+				return
+			}
+		}
 		if err == scheduler.ErrBackpressure {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 			return

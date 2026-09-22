@@ -25,6 +25,9 @@ curl -X POST http://localhost:8080/tasks \
   -d '{"name":"echo","payload":{"message":"hello"},"delay": 0, "retry":{"max_attempts":3}}'
 ```
 
+Clients that may retry requests should send an `Idempotency-Key` header. A
+repeated key returns the original task instead of creating a duplicate.
+
 Inspect, list, or cancel tasks with `GET /tasks`, `GET /tasks/{id}`, and
 `DELETE /tasks/{id}`. Set a larger `priority` value to run eligible work first.
 Tasks can declare predecessor IDs through `depends_on`; they run only after all
