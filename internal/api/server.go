@@ -355,6 +355,10 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	if idempotencyKey == "" {
 		idempotencyKey = strings.TrimSpace(r.Header.Get("X-Idempotency-Key"))
 	}
+	if len(idempotencyKey) > 256 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "idempotency key is too long"})
+		return
+	}
 	t := task.Task{ID: req.ID, IdempotencyKey: idempotencyKey, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
