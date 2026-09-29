@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: JobRaft
+    folder: JobRaft
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

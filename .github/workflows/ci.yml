@@ -7,6 +7,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: jobraft
+          POSTGRES_USER: jobraft
+          POSTGRES_PASSWORD: jobraft
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobraft -d jobraft"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -16,6 +30,12 @@ jobs:
         shell: bash
         run: test -z "$(gofmt -l .)"
       - name: Test
+        env:
+          JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
         run: go test ./...
+      - name: Race test
+        env:
+          JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
+        run: go test -race ./...
       - name: Build
         run: go build ./...

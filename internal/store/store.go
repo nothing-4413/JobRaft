@@ -12,6 +12,7 @@ import (
 var ErrNotFound = errors.New("task not found")
 var ErrConflict = errors.New("task changed since it was read")
 var ErrDuplicateIdempotencyKey = errors.New("idempotency key already exists")
+var ErrNoTaskAvailable = errors.New("no task available")
 
 // Store persists task metadata. Implementations must be safe for concurrent use.
 type Store interface {
@@ -28,13 +29,38 @@ type ConditionalUpdater interface {
 	UpdateIfState(string, task.Status, string, task.Task) error
 }
 
-// MemoryStore is a simple in-process store useful for development and tests.
-type MemoryStore struct {
-	mu    sync.RWMutex
-	tasks map[string]task.Task
+// AtomicClaimer lets a shared store reserve due work without the read/update
+// race that exists when several scheduler processes use the same queue.
+type AtomicClaimer interface {
+	ClaimDue(workerID string, leaseTTL time.Duration) (task.Task, error)
 }
 
-func NewMemory() *MemoryStore { return &MemoryStore{tasks: make(map[string]task.Task)} }
+// Worker is a worker liveness lease. Persistent implementations make workers
+// visible to every API instance behind a load balancer.
+type Worker struct {
+	ID            string    `json:"id"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	LeaseUntil    time.Time `json:"lease_until"`
+}
+
+type WorkerRegistry interface {
+	RegisterWorker(string, time.Duration) (Worker, error)
+	HeartbeatWorker(string, time.Duration) (Worker, error)
+	GetWorker(string) (Worker, error)
+	ListWorkers(time.Time) ([]Worker, error)
+	RenewWorkerTaskLeases(string, time.Time) error
+}
+
+// MemoryStore is a simple in-process store useful for development and tests.
+type MemoryStore struct {
+	mu      sync.RWMutex
+	tasks   map[string]task.Task
+	workers map[string]Worker
+}
+
+func NewMemory() *MemoryStore {
+	return &MemoryStore{tasks: make(map[string]task.Task), workers: make(map[string]Worker)}
+}
 
 func (s *MemoryStore) Create(t task.Task) error {
 	if err := t.Validate(); err != nil {
@@ -134,6 +160,64 @@ func (s *MemoryStore) UpdateIfState(id string, status task.Status, token string,
 	return nil
 }
 
+func (s *MemoryStore) RegisterWorker(id string, ttl time.Duration) (Worker, error) {
+	if id == "" {
+		return Worker{}, errors.New("worker id is required")
+	}
+	now := time.Now()
+	w := Worker{ID: id, LastHeartbeat: now, LeaseUntil: now.Add(ttl)}
+	s.mu.Lock()
+	s.workers[id] = w
+	s.mu.Unlock()
+	return w, nil
+}
+
+func (s *MemoryStore) HeartbeatWorker(id string, ttl time.Duration) (Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workers[id]; !ok {
+		return Worker{}, errors.New("worker not registered")
+	}
+	now := time.Now()
+	w := Worker{ID: id, LastHeartbeat: now, LeaseUntil: now.Add(ttl)}
+	s.workers[id] = w
+	return w, nil
+}
+
+func (s *MemoryStore) GetWorker(id string) (Worker, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	w, ok := s.workers[id]
+	if !ok {
+		return Worker{}, ErrNotFound
+	}
+	return w, nil
+}
+
+func (s *MemoryStore) ListWorkers(now time.Time) ([]Worker, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Worker, 0, len(s.workers))
+	for _, w := range s.workers {
+		if w.LeaseUntil.After(now) {
+			result = append(result, w)
+		}
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) RenewWorkerTaskLeases(workerID string, until time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, t := range s.tasks {
+		if t.Status == task.StatusRunning && t.WorkerID == workerID {
+			t.LeaseUntil = timePtr(until)
+			s.tasks[id] = t
+		}
+	}
+	return nil
+}
+
 func clone(t task.Task) task.Task {
 	if t.Payload != nil {
 		t.Payload = append([]byte(nil), t.Payload...)
@@ -146,6 +230,8 @@ func clone(t task.Task) task.Task {
 	}
 	return t
 }
+
+func timePtr(value time.Time) *time.Time { return &value }
 
 // Due returns pending/retrying tasks whose scheduled time has arrived.
 func Due(tasks []task.Task, now time.Time) []task.Task {

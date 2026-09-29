@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,8 +76,8 @@ func TestDueSortsByPriority(t *testing.T) {
 
 func TestSchedulerHonorsDependencies(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	order := make([]string, 0, 2)
-	_ = s.Register("step", func(_ context.Context, t task.Task) error { order = append(order, t.ID); return nil })
+	order := make(chan string, 2)
+	_ = s.Register("step", func(_ context.Context, t task.Task) error { order <- t.ID; return nil })
 	if err := s.Submit(task.Task{ID: "first", Name: "step", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +86,16 @@ func TestSchedulerHonorsDependencies(t *testing.T) {
 	}
 	s.Start(context.Background())
 	defer s.Stop()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && len(order) < 2 {
-		time.Sleep(10 * time.Millisecond)
+	var got [2]string
+	for i := range got {
+		select {
+		case got[i] = <-order:
+		case <-time.After(time.Second):
+			t.Fatalf("dependency task %d did not run", i+1)
+		}
 	}
-	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
-		t.Fatalf("dependency order incorrect: %v", order)
+	if got[0] != "first" || got[1] != "second" {
+		t.Fatalf("dependency order incorrect: %v", got)
 	}
 }
 
@@ -185,38 +190,38 @@ func TestExpiredWorkerCannotCompleteTask(t *testing.T) {
 
 func TestScheduledTaskRunsAgain(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	count := 0
-	_ = s.Register("periodic", func(context.Context, task.Task) error { count++; return nil })
+	var count atomic.Int32
+	_ = s.Register("periodic", func(context.Context, task.Task) error { count.Add(1); return nil })
 	if err := s.Submit(task.Task{ID: "periodic-1", Name: "periodic", Schedule: 10 * time.Millisecond, Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	s.Start(context.Background())
 	defer s.Stop()
 	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && count < 2 {
+	for time.Now().Before(deadline) && count.Load() < 2 {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if count < 2 {
-		t.Fatalf("expected recurring task to run twice, got %d", count)
+	if count.Load() < 2 {
+		t.Fatalf("expected recurring task to run twice, got %d", count.Load())
 	}
 }
 
 func TestScheduledTaskResetsAttempts(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	count := 0
-	_ = s.Register("periodic-reset", func(context.Context, task.Task) error { count++; return nil })
+	var count atomic.Int32
+	_ = s.Register("periodic-reset", func(context.Context, task.Task) error { count.Add(1); return nil })
 	if err := s.Submit(task.Task{ID: "periodic-reset-1", Name: "periodic-reset", Schedule: 10 * time.Millisecond, Retry: task.RetryPolicy{MaxAttempts: 2}}); err != nil {
 		t.Fatal(err)
 	}
 	s.Start(context.Background())
 	defer s.Stop()
 	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && count < 2 {
+	for time.Now().Before(deadline) && count.Load() < 2 {
 		time.Sleep(10 * time.Millisecond)
 	}
 	got, _ := s.Get("periodic-reset-1")
-	if count < 2 || got.Attempts > 1 {
-		t.Fatalf("attempts were not reset: count=%d attempts=%d", count, got.Attempts)
+	if count.Load() < 2 || got.Attempts > 1 {
+		t.Fatalf("attempts were not reset: count=%d attempts=%d", count.Load(), got.Attempts)
 	}
 }
 
@@ -265,18 +270,18 @@ func TestStopRequeuesRunningTasks(t *testing.T) {
 
 func TestSchedulerCanRestartAfterStop(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	runs := 0
-	_ = s.Register("restart", func(context.Context, task.Task) error { runs++; return nil })
+	var runs atomic.Int32
+	_ = s.Register("restart", func(context.Context, task.Task) error { runs.Add(1); return nil })
 	if err := s.Submit(task.Task{ID: "restart-1", Name: "restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	s.Start(context.Background())
 	deadline := time.Now().Add(time.Second)
-	for runs == 0 && time.Now().Before(deadline) {
+	for runs.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	s.Stop()
-	if runs == 0 {
+	if runs.Load() == 0 {
 		t.Fatal("task did not run before stop")
 	}
 	if err := s.Submit(task.Task{ID: "restart-2", Name: "restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
@@ -285,26 +290,26 @@ func TestSchedulerCanRestartAfterStop(t *testing.T) {
 	s.Start(context.Background())
 	defer s.Stop()
 	deadline = time.Now().Add(time.Second)
-	for runs < 2 && time.Now().Before(deadline) {
+	for runs.Load() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if runs < 2 {
-		t.Fatalf("scheduler did not restart, runs=%d", runs)
+	if runs.Load() < 2 {
+		t.Fatalf("scheduler did not restart, runs=%d", runs.Load())
 	}
 }
 
 func TestSchedulerCanRestartAfterContextCancellation(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	runs := 0
-	_ = s.Register("context-restart", func(context.Context, task.Task) error { runs++; return nil })
+	var runs atomic.Int32
+	_ = s.Register("context-restart", func(context.Context, task.Task) error { runs.Add(1); return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
 	cancel()
 	deadline := time.Now().Add(time.Second)
-	for !s.stopped && time.Now().Before(deadline) {
+	for !schedulerStopped(s) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !s.stopped {
+	if !schedulerStopped(s) {
 		t.Fatal("scheduler did not observe context cancellation")
 	}
 	if err := s.Submit(task.Task{ID: "context-restart-1", Name: "context-restart", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
@@ -313,10 +318,10 @@ func TestSchedulerCanRestartAfterContextCancellation(t *testing.T) {
 	s.Start(context.Background())
 	defer s.Stop()
 	deadline = time.Now().Add(time.Second)
-	for runs == 0 && time.Now().Before(deadline) {
+	for runs.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if runs == 0 {
+	if runs.Load() == 0 {
 		t.Fatal("scheduler did not restart after context cancellation")
 	}
 }
@@ -417,4 +422,10 @@ func TestSubmitRejectsMissingDependency(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing dependency error")
 	}
+}
+
+func schedulerStopped(s *Scheduler) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopped
 }

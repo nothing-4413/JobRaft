@@ -119,6 +119,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := s.scheduler.Metrics()
+	latencyBuckets, latencySum, latencyCount := s.scheduler.QueueLatencyHistogram()
 	items, _ := s.scheduler.List()
 	pending, running, retrying := 0, 0, 0
 	for _, item := range items {
@@ -133,7 +134,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	workers := len(s.scheduler.Workers())
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "# TYPE jobraft_tasks_submitted_total counter\njobraft_tasks_submitted_total %d\n# TYPE jobraft_tasks_succeeded_total counter\njobraft_tasks_succeeded_total %d\n# TYPE jobraft_tasks_failed_total counter\njobraft_tasks_failed_total %d\n# TYPE jobraft_tasks_retried_total counter\njobraft_tasks_retried_total %d\n# TYPE jobraft_tasks_canceled_total counter\njobraft_tasks_canceled_total %d\n# TYPE jobraft_tasks_pending gauge\njobraft_tasks_pending %d\n# TYPE jobraft_tasks_running gauge\njobraft_tasks_running %d\n# TYPE jobraft_tasks_retrying gauge\njobraft_tasks_retrying %d\n# TYPE jobraft_workers_online gauge\njobraft_workers_online %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled, pending, running, retrying, workers)
+	_, _ = fmt.Fprintf(w, "# TYPE jobraft_tasks_submitted_total counter\njobraft_tasks_submitted_total %d\n# TYPE jobraft_tasks_succeeded_total counter\njobraft_tasks_succeeded_total %d\n# TYPE jobraft_tasks_failed_total counter\njobraft_tasks_failed_total %d\n# TYPE jobraft_tasks_retried_total counter\njobraft_tasks_retried_total %d\n# TYPE jobraft_tasks_canceled_total counter\njobraft_tasks_canceled_total %d\n# TYPE jobraft_tasks_lease_expired_total counter\njobraft_tasks_lease_expired_total %d\n# TYPE jobraft_tasks_pending gauge\njobraft_tasks_pending %d\n# TYPE jobraft_tasks_running gauge\njobraft_tasks_running %d\n# TYPE jobraft_tasks_retrying gauge\njobraft_tasks_retrying %d\n# TYPE jobraft_workers_online gauge\njobraft_workers_online %d\n# TYPE jobraft_task_queue_latency_seconds histogram\njobraft_task_queue_latency_seconds_bucket{le=\"0.1\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"1\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"5\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"10\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"15\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"30\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"60\"} %d\njobraft_task_queue_latency_seconds_bucket{le=\"+Inf\"} %d\njobraft_task_queue_latency_seconds_sum %f\njobraft_task_queue_latency_seconds_count %d\n", m.Submitted, m.Succeeded, m.Failed, m.Retried, m.Canceled, m.LeaseExpired, pending, running, retrying, workers, latencyBuckets[0], latencyBuckets[1], latencyBuckets[2], latencyBuckets[3], latencyBuckets[4], latencyBuckets[5], latencyBuckets[6], latencyBuckets[7], latencySum, latencyCount)
 }
 
 func (s *Server) workers(w http.ResponseWriter, r *http.Request) {

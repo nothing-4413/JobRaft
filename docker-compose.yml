@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jobraft
+      POSTGRES_USER: jobraft
+      POSTGRES_PASSWORD: jobraft
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobraft -d jobraft"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - jobraft-postgres:/var/lib/postgresql/data
+
+  jobraft-1:
+    build: .
+    environment:
+      JOBRAFT_ADDR: :8080
+      JOBRAFT_DATABASE_URL: postgres://jobraft:jobraft@postgres:5432/jobraft?sslmode=disable
+      JOBRAFT_API_TOKEN: local-dev-token
+      JOBRAFT_MAX_PENDING: "10000"
+      JOBRAFT_LEASE_TTL: 3s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  jobraft-2:
+    build: .
+    environment:
+      JOBRAFT_ADDR: :8080
+      JOBRAFT_DATABASE_URL: postgres://jobraft:jobraft@postgres:5432/jobraft?sslmode=disable
+      JOBRAFT_API_TOKEN: local-dev-token
+      JOBRAFT_MAX_PENDING: "10000"
+      JOBRAFT_LEASE_TTL: 3s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - jobraft-1
+      - jobraft-2
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: local-dev-password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+
+volumes:
+  jobraft-postgres:

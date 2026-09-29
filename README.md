@@ -75,7 +75,9 @@ Deployment settings:
 
 - `JOBRAFT_ADDR` (default `:8080`)
 - `JOBRAFT_WORKERS` (default `4`)
-- `JOBRAFT_STORE` (optional JSON persistence path)
+- `JOBRAFT_STORE` (optional single-process JSON persistence path)
+- `JOBRAFT_DATABASE_URL` (optional PostgreSQL connection URL; takes precedence
+  over `JOBRAFT_STORE` and enables multi-instance atomic task claims)
 - `JOBRAFT_NODE_ID` (optional leader-election identity)
 - `JOBRAFT_CLUSTER_FILE` (optional shared registry file for multi-process leader election)
 - `JOBRAFT_MAX_PENDING` (optional in-flight task limit)
@@ -88,6 +90,16 @@ instead of silently falling back to an unsafe or unexpected mode.
 
 Build a container with `docker build -t jobraft .` and run it with a writable
 `/data` volume for persistence.
+
+For a reproducible two-instance PostgreSQL deployment, run
+`docker compose up --build`. Operational assumptions and failure-injection
+checks are documented in `docs/operations.md`.
+The stack exposes API instances on ports `8080` and `8081`, Prometheus on
+`9090`, and Grafana on `3000` (`admin` / `local-dev-password` for local use).
+Run `go run ./cmd/jobraft-bench` after the stack is ready to execute the
+cross-instance benchmark documented in `docs/benchmark-results.md`.
+Architecture, failure semantics, and interview-ready project notes are in
+`docs/architecture.md`.
 
 For a deployed instance, set `JOBRAFT_API_TOKEN` and send either
 `Authorization: Bearer <token>` or `X-API-Key: <token>`. The empty-token mode is
@@ -103,9 +115,10 @@ becomes `retrying` until its retry budget is exhausted, after which it is
 `failed`. Cancellation is terminal. Delivery is intentionally at-least-once;
 handlers should be idempotent.
 
-The storage layer is an interface (`internal/store.Store`) so SQLite/PostgreSQL
-backends can be added without changing scheduler logic. The default binary uses
-the concurrency-safe in-memory implementation.
+The storage layer is an interface (`internal/store.Store`) with in-memory, JSON
+file, and PostgreSQL implementations. PostgreSQL uses transactions and `FOR
+UPDATE SKIP LOCKED` for atomic claims across API instances. The default binary
+uses the concurrency-safe in-memory implementation.
 
 When `JOBRAFT_STORE` points to a JSON file, tasks that were running when the
 process stopped are recovered as retryable work on the next startup.

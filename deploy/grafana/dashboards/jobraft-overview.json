@@ -1,0 +1,55 @@
+{
+  "uid": "jobraft-overview",
+  "title": "JobRaft Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Queue State",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "jobraft-prometheus"},
+      "targets": [
+        {"expr": "sum(jobraft_tasks_pending)", "legendFormat": "pending", "refId": "A"},
+        {"expr": "sum(jobraft_tasks_running)", "legendFormat": "running", "refId": "B"},
+        {"expr": "sum(jobraft_tasks_retrying)", "legendFormat": "retrying", "refId": "C"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Task Throughput",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "jobraft-prometheus"},
+      "targets": [
+        {"expr": "sum(rate(jobraft_tasks_succeeded_total[1m]))", "legendFormat": "succeeded/s", "refId": "A"},
+        {"expr": "sum(rate(jobraft_tasks_failed_total[1m]))", "legendFormat": "failed/s", "refId": "B"},
+        {"expr": "sum(rate(jobraft_tasks_retried_total[1m]))", "legendFormat": "retried/s", "refId": "C"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Queue Latency P95",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "jobraft-prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(jobraft_task_queue_latency_seconds_bucket[5m])))", "legendFormat": "p95 seconds", "refId": "A"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Lease Expirations",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "jobraft-prometheus"},
+      "targets": [
+        {"expr": "sum(rate(jobraft_tasks_lease_expired_total[5m]))", "legendFormat": "expired/s", "refId": "A"},
+        {"expr": "sum(jobraft_workers_online)", "legendFormat": "workers", "refId": "B"}
+      ]
+    }
+  ]
+}

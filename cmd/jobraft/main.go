@@ -20,12 +20,25 @@ import (
 
 func main() {
 	var st store.Store = store.NewMemory()
-	if path := os.Getenv("JOBRAFT_STORE"); path != "" {
+	var closeStore func()
+	if dsn := os.Getenv("JOBRAFT_DATABASE_URL"); dsn != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		persisted, err := store.NewPostgres(ctx, dsn)
+		cancel()
+		if err != nil {
+			log.Fatalf("PostgreSQL store unavailable: %v", err)
+		}
+		st = persisted
+		closeStore = func() { _ = persisted.Close() }
+	} else if path := os.Getenv("JOBRAFT_STORE"); path != "" {
 		if persisted, err := store.NewFile(filepath.Clean(path)); err == nil {
 			st = persisted
 		} else {
 			log.Fatalf("file store unavailable: %v", err)
 		}
+	}
+	if closeStore != nil {
+		defer closeStore()
 	}
 	workers := 4
 	if value := os.Getenv("JOBRAFT_WORKERS"); value != "" {

@@ -159,9 +159,17 @@ func (c *Client) runHandler(ctx context.Context, t task.Task, handler Handler, f
 		case err := <-done:
 			return err, nil
 		case <-ticker.C:
+			if err := ctx.Err(); err != nil {
+				cancel()
+				<-done
+				return nil, err
+			}
 			if _, err := c.RenewLease(ctx, t); err != nil {
 				cancel()
 				<-done
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
 				return nil, err
 			}
 		case <-ctx.Done():

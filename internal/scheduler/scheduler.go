@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,13 +20,13 @@ type LeaderGate interface{ IsLeader() bool }
 var ErrNoTask = errors.New("no task available")
 var ErrBackpressure = errors.New("scheduler queue is full")
 
-type Worker struct {
-	ID            string    `json:"id"`
-	LastHeartbeat time.Time `json:"last_heartbeat"`
-	LeaseUntil    time.Time `json:"lease_until"`
+type Worker = store.Worker
+
+type Metrics struct {
+	Submitted, Succeeded, Failed, Retried, Canceled, LeaseExpired uint64
 }
 
-type Metrics struct{ Submitted, Succeeded, Failed, Retried, Canceled uint64 }
+var queueLatencyBounds = [...]float64{0.1, 1, 5, 10, 15, 30, 60}
 
 type Scheduler struct {
 	store                                           store.Store
@@ -44,6 +45,11 @@ type Scheduler struct {
 	leaderGate                                      LeaderGate
 	stopped                                         bool
 	submitted, succeeded, failed, retried, canceled uint64
+	leaseExpired                                    uint64
+	latencyMu                                       sync.Mutex
+	queueLatencyBuckets                             [8]uint64
+	queueLatencySum                                 float64
+	queueLatencyCount                               uint64
 }
 
 func New(s store.Store, workers int) *Scheduler {
@@ -68,6 +74,16 @@ func (s *Scheduler) SetLeaseTTL(ttl time.Duration) {
 func (s *Scheduler) SetLeaderGate(g LeaderGate) { s.leaderGate = g }
 
 func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
+	if registry, ok := s.store.(store.WorkerRegistry); ok {
+		w, err := registry.RegisterWorker(id, s.leaseTTL)
+		if err != nil {
+			return Worker{}, err
+		}
+		s.mu.Lock()
+		s.workersByID[id] = w
+		s.mu.Unlock()
+		return w, nil
+	}
 	if id == "" {
 		return Worker{}, errors.New("worker id is required")
 	}
@@ -80,6 +96,17 @@ func (s *Scheduler) RegisterWorker(id string) (Worker, error) {
 }
 
 func (s *Scheduler) Heartbeat(id string) (Worker, error) {
+	if registry, ok := s.store.(store.WorkerRegistry); ok {
+		w, err := registry.HeartbeatWorker(id, s.leaseTTL)
+		if err != nil {
+			return Worker{}, err
+		}
+		s.mu.Lock()
+		s.workersByID[id] = w
+		s.mu.Unlock()
+		_ = registry.RenewWorkerTaskLeases(id, w.LeaseUntil)
+		return w, nil
+	}
 	s.mu.Lock()
 	w, ok := s.workersByID[id]
 	if !ok {
@@ -106,6 +133,13 @@ func (s *Scheduler) Heartbeat(id string) (Worker, error) {
 }
 
 func (s *Scheduler) Workers() []Worker {
+	if registry, ok := s.store.(store.WorkerRegistry); ok {
+		workers, err := registry.ListWorkers(time.Now())
+		if err == nil {
+			return workers
+		}
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -229,7 +263,30 @@ func (s *Scheduler) Get(id string) (task.Task, error) { return s.store.Get(id) }
 func (s *Scheduler) List() ([]task.Task, error) { return s.store.List() }
 
 func (s *Scheduler) Metrics() Metrics {
-	return Metrics{Submitted: atomic.LoadUint64(&s.submitted), Succeeded: atomic.LoadUint64(&s.succeeded), Failed: atomic.LoadUint64(&s.failed), Retried: atomic.LoadUint64(&s.retried), Canceled: atomic.LoadUint64(&s.canceled)}
+	return Metrics{Submitted: atomic.LoadUint64(&s.submitted), Succeeded: atomic.LoadUint64(&s.succeeded), Failed: atomic.LoadUint64(&s.failed), Retried: atomic.LoadUint64(&s.retried), Canceled: atomic.LoadUint64(&s.canceled), LeaseExpired: atomic.LoadUint64(&s.leaseExpired)}
+}
+
+func (s *Scheduler) QueueLatencyHistogram() ([8]uint64, float64, uint64) {
+	s.latencyMu.Lock()
+	defer s.latencyMu.Unlock()
+	return s.queueLatencyBuckets, s.queueLatencySum, s.queueLatencyCount
+}
+
+func (s *Scheduler) observeQueueLatency(t task.Task) {
+	seconds := time.Since(t.RunAt).Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	s.latencyMu.Lock()
+	for i, bound := range queueLatencyBounds {
+		if seconds <= bound {
+			s.queueLatencyBuckets[i]++
+		}
+	}
+	s.queueLatencyBuckets[len(queueLatencyBounds)]++
+	s.queueLatencySum += seconds
+	s.queueLatencyCount++
+	s.latencyMu.Unlock()
 }
 
 // Claim reserves one eligible task for an external worker. The returned lease
@@ -240,6 +297,16 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 	}
 	if !s.workerHealthy(workerID) {
 		return task.Task{}, errors.New("worker is not registered or lease expired")
+	}
+	if claimer, ok := s.store.(store.AtomicClaimer); ok {
+		claimed, err := claimer.ClaimDue(workerID, s.leaseTTL)
+		if errors.Is(err, store.ErrNoTaskAvailable) {
+			return task.Task{}, ErrNoTask
+		}
+		if err == nil {
+			s.observeQueueLatency(claimed)
+		}
+		return claimed, err
 	}
 	items, err := s.store.List()
 	if err != nil {
@@ -273,6 +340,7 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 			s.mu.Unlock()
 			return task.Task{}, err
 		}
+		s.observeQueueLatency(t)
 		return t, nil
 	}
 	return task.Task{}, ErrNoTask
@@ -335,6 +403,10 @@ func validLease(t task.Task, workerID, token string, now time.Time) bool {
 }
 
 func (s *Scheduler) workerHealthy(id string) bool {
+	if registry, ok := s.store.(store.WorkerRegistry); ok {
+		w, err := registry.GetWorker(id)
+		return err == nil && w.LeaseUntil.After(time.Now())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.workersByID[id]
@@ -381,10 +453,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.stopped = false
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
+	workerPrefix := fmt.Sprintf("local-%d", time.Now().UnixNano())
 	for i := 0; i < s.workers; i++ {
-		_, _ = s.RegisterWorker(fmt.Sprintf("local-%d", i))
+		_, _ = s.RegisterWorker(fmt.Sprintf("%s-%d", workerPrefix, i))
 	}
-	s.recoverRunning()
+	if _, shared := s.store.(store.AtomicClaimer); !shared {
+		s.recoverRunning()
+	}
 	go s.loop(ctx)
 }
 
@@ -408,15 +483,27 @@ func (s *Scheduler) requeueRunningOnStop() {
 	}
 	now := time.Now()
 	for _, t := range items {
-		if t.Status != task.StatusRunning {
+		if t.Status != task.StatusRunning || !s.isLocalWorker(t.WorkerID) {
 			continue
 		}
+		expectedToken := t.LeaseToken
 		t.Status = task.StatusRetrying
 		t.RunAt = now
 		t.LastError = "scheduler stopped while task was running"
 		t.WorkerID, t.LeaseUntil, t.LeaseToken = "", nil, ""
-		_ = s.store.Update(t)
+		if updater, ok := s.store.(store.ConditionalUpdater); ok {
+			_ = updater.UpdateIfState(t.ID, task.StatusRunning, expectedToken, t)
+		} else {
+			_ = s.store.Update(t)
+		}
 	}
+}
+
+func (s *Scheduler) isLocalWorker(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.workersByID[id]
+	return ok && strings.HasPrefix(id, "local-")
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
@@ -427,8 +514,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 		s.mu.Lock()
 		s.stopped = true
 		s.cancel = nil
+		done := s.done
 		s.mu.Unlock()
-		close(s.done)
+		close(done)
 	}()
 	for i := 0; i < s.workers; i++ {
 		go s.worker(ctx)
@@ -448,8 +536,16 @@ func (s *Scheduler) loop(ctx context.Context) {
 		case <-ticker.C:
 			s.dispatch()
 		case <-heartbeatTicker.C:
-			for i := 0; i < s.workers; i++ {
-				_, _ = s.Heartbeat(fmt.Sprintf("local-%d", i))
+			s.mu.Lock()
+			localWorkers := make([]string, 0, len(s.workersByID))
+			for id := range s.workersByID {
+				if strings.HasPrefix(id, "local-") {
+					localWorkers = append(localWorkers, id)
+				}
+			}
+			s.mu.Unlock()
+			for _, id := range localWorkers {
+				_, _ = s.Heartbeat(id)
 			}
 		}
 	}
@@ -486,13 +582,21 @@ func (s *Scheduler) dispatch() {
 			continue
 		}
 		now := time.Now()
+		expectedStatus, expectedToken := t.Status, t.LeaseToken
 		t.Status = task.StatusRunning
 		t.Attempts++
 		t.StartedAt = &now
 		t.LeaseUntil = timePtr(now.Add(s.leaseTTL))
 		t.LeaseToken = fmt.Sprintf("%d-%s", now.UnixNano(), t.ID)
 		t.WorkerID = s.pickWorker()
-		if s.store.Update(t) == nil {
+		var updateErr error
+		if updater, ok := s.store.(store.ConditionalUpdater); ok {
+			updateErr = updater.UpdateIfState(t.ID, expectedStatus, expectedToken, t)
+		} else {
+			updateErr = s.store.Update(t)
+		}
+		if updateErr == nil {
+			s.observeQueueLatency(t)
 			select {
 			case s.queue <- t:
 			default:
@@ -652,9 +756,18 @@ func (s *Scheduler) reapExpired() {
 		}
 		delete(s.running, t.ID)
 		s.mu.Unlock()
+		expectedToken := t.LeaseToken
 		t.Status, t.RunAt, t.WorkerID, t.LeaseUntil, t.LeaseToken = task.StatusRetrying, now, "", nil, ""
 		t.LastError = "worker lease expired"
-		_ = s.store.Update(t)
+		if updater, ok := s.store.(store.ConditionalUpdater); ok {
+			if updater.UpdateIfState(t.ID, task.StatusRunning, expectedToken, t) == nil {
+				atomic.AddUint64(&s.leaseExpired, 1)
+			}
+		} else {
+			if s.store.Update(t) == nil {
+				atomic.AddUint64(&s.leaseExpired, 1)
+			}
+		}
 	}
 }
 
