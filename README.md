@@ -9,6 +9,22 @@ leases, persistence, and coordination. It is not intended to become a general
 business platform or a feature-heavy frontend; those concerns stay outside the
 core so the implementation remains useful as a technical systems project.
 
+## Repository layout
+
+| Path | Description |
+| --- | --- |
+| [`cmd/jobraft`](cmd/jobraft/README.md) | Server entry point wiring store, scheduler, API, and elector. |
+| [`cmd/jobraft-bench`](cmd/jobraft-bench/README.md) | Dependency-free cross-instance benchmark tool. |
+| [`internal/task`](internal/task/README.md) | Domain model: task lifecycle, retry policy, validation. |
+| [`internal/store`](internal/store/README.md) | `Store` contract plus in-memory, JSON-file, and PostgreSQL backends. |
+| [`internal/scheduler`](internal/scheduler/README.md) | Work dispatch, leases, retries, cancellation, backpressure, metrics. |
+| [`internal/api`](internal/api/README.md) | HTTP server, JSON endpoints, and authentication. |
+| [`internal/cluster`](internal/cluster/README.md) | Leader election and the embedded replicated-log consensus model. |
+| [`internal/fileutil`](internal/fileutil/README.md) | Cross-platform atomic file replacement. |
+| [`pkg/workerclient`](pkg/workerclient/README.md) | External worker client SDK. |
+| [`deploy`](deploy/README.md) | Docker Compose, Prometheus, and Grafana configuration. |
+| [`docs`](docs/README.md) | Architecture, API, operations, and benchmark documentation. |
+
 ## Run
 
 ```bash
