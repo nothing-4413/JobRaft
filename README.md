@@ -1,39 +1,34 @@
 # JobRaft
 
-JobRaft is a small Go workflow/task scheduler built in stages. The first stage
-contains an embeddable scheduler and an HTTP API with delayed execution,
-timeouts, cancellation, retries, and task status inspection.
+JobRaft 是一个用 Go 编写的小型工作流/任务调度器，按阶段构建。第一阶段包含一个可嵌入的调度器和一个 HTTP API，支持延迟执行、超时、取消、重试以及任务状态查询。
 
-The project deliberately focuses on scheduling correctness, delivery semantics,
-leases, persistence, and coordination. It is not intended to become a general
-business platform or a feature-heavy frontend; those concerns stay outside the
-core so the implementation remains useful as a technical systems project.
+项目刻意聚焦于调度正确性、投递语义、租约、持久化与协调。它不打算成为通用业务平台或功能繁重的前端；这些关注点保持在核心之外，使实现保持为一个有价值的技术系统项目。
 
-## Repository layout
+## 目录结构
 
-| Path | Description |
+| 路径 | 说明 |
 | --- | --- |
-| [`cmd/jobraft`](cmd/jobraft/README.md) | Server entry point wiring store, scheduler, API, and elector. |
-| [`cmd/jobraft-bench`](cmd/jobraft-bench/README.md) | Dependency-free cross-instance benchmark tool. |
-| [`internal/task`](internal/task/README.md) | Domain model: task lifecycle, retry policy, validation. |
-| [`internal/store`](internal/store/README.md) | `Store` contract plus in-memory, JSON-file, and PostgreSQL backends. |
-| [`internal/scheduler`](internal/scheduler/README.md) | Work dispatch, leases, retries, cancellation, backpressure, metrics. |
-| [`internal/api`](internal/api/README.md) | HTTP server, JSON endpoints, and authentication. |
-| [`internal/cluster`](internal/cluster/README.md) | Leader election and the embedded replicated-log consensus model. |
-| [`internal/fileutil`](internal/fileutil/README.md) | Cross-platform atomic file replacement. |
-| [`pkg/workerclient`](pkg/workerclient/README.md) | External worker client SDK. |
-| [`deploy`](deploy/README.md) | Docker Compose, Prometheus, and Grafana configuration. |
-| [`docs`](docs/README.md) | Architecture, API, operations, and benchmark documentation. |
+| [`cmd/jobraft`](cmd/jobraft/README.md) | 服务入口，装配存储、调度器、API 与选主器。 |
+| [`cmd/jobraft-bench`](cmd/jobraft-bench/README.md) | 零依赖的跨实例压测工具。 |
+| [`internal/task`](internal/task/README.md) | 领域模型：任务生命周期、重试策略、校验。 |
+| [`internal/store`](internal/store/README.md) | `Store` 契约及内存 / JSON 文件 / PostgreSQL 三种后端。 |
+| [`internal/scheduler`](internal/scheduler/README.md) | 任务分发、租约、重试、取消、背压、指标。 |
+| [`internal/api`](internal/api/README.md) | HTTP 服务器、JSON 端点与鉴权。 |
+| [`internal/cluster`](internal/cluster/README.md) | 领导选举与内嵌复制日志共识模型。 |
+| [`internal/fileutil`](internal/fileutil/README.md) | 跨平台原子文件替换。 |
+| [`pkg/workerclient`](pkg/workerclient/README.md) | 外部 Worker 客户端 SDK。 |
+| [`deploy`](deploy/README.md) | Docker Compose、Prometheus 与 Grafana 配置。 |
+| [`docs`](docs/README.md) | 架构、API、运维与压测文档。 |
 
-## Run
+## 运行
 
 ```bash
 go run ./cmd/jobraft
 ```
 
-The server listens on `:8080`.
+服务默认监听 `:8080`。
 
-Create a task:
+创建任务：
 
 ```bash
 curl -X POST http://localhost:8080/tasks \
@@ -41,100 +36,58 @@ curl -X POST http://localhost:8080/tasks \
   -d '{"name":"echo","payload":{"message":"hello"},"delay": 0, "retry":{"max_attempts":3}}'
 ```
 
-Clients that may retry requests should send an `Idempotency-Key` header. A
-repeated key returns the original task instead of creating a duplicate.
+可能重试请求的客户端应携带 `Idempotency-Key` 请求头。重复的 key 会返回原任务，而不会创建重复任务。
 
-Inspect, list, or cancel tasks with `GET /tasks`, `GET /tasks/{id}`, and
-`DELETE /tasks/{id}`. Set a larger `priority` value to run eligible work first.
-Tasks can declare predecessor IDs through `depends_on`; they run only after all
-predecessors succeed, and fail automatically if a predecessor fails or is
-canceled.
-Set `schedule` to a duration in nanoseconds to create a recurring task; after
-each successful run it returns to `pending` and is scheduled again.
+使用 `GET /tasks`、`GET /tasks/{id}` 和 `DELETE /tasks/{id}` 查询、列出或取消任务。设置更大的 `priority` 值可让符合条件的任务优先执行。任务可通过 `depends_on` 声明前置任务 ID；它们只会在所有前置任务成功后运行，若某个前置任务失败或被取消则会自动失败。
+将 `schedule` 设置为以纳秒为单位的时长即可创建周期性任务；每次成功运行后它会回到 `pending` 并再次排期。
 
-Workers can be registered and kept alive with `POST /workers` and
-`POST /workers/{id}`; inspect them with `GET /workers`.
-An external worker can pull work with `POST /workers/{id}/claim` and acknowledge
-it using `POST /tasks/{id}?complete=true` with `worker_id`, `lease_token`, and
-an optional `error` field. Heartbeats renew the worker's active task leases.
-Successful workers may also send a JSON `result`; it is stored on the task and
-returned by the task query/list APIs. The SDK exposes this as
-`CompleteWithResult`.
-Add `?wait=10s` to the claim request for long polling (maximum 30 seconds).
-Prometheus-compatible counters are available from `GET /metrics`.
-The endpoint also exposes current pending, running, retrying, and online-worker
-gauges for queue pressure dashboards.
-Use `/healthz` for liveness and `/readyz` for readiness probes.
-The scheduler applies a configurable in-flight task limit through
-`SetMaxPending`; submissions over the limit receive HTTP 429.
+可通过 `POST /workers` 与 `POST /workers/{id}` 注册并保活 Worker；用 `GET /workers` 查看。
+外部 Worker 用 `POST /workers/{id}/claim` 拉取任务，并通过 `POST /tasks/{id}?complete=true` 携带 `worker_id`、`lease_token` 与可选的 `error` 字段确认完成。心跳会续期该 Worker 的活动任务租约。
+成功的 Worker 还可以发送一个 JSON `result`；它会被存储在任务上，并通过任务查询/列表 API 返回。SDK 以 `CompleteWithResult` 暴露该能力。
+在 claim 请求上加 `?wait=10s` 可进行长轮询（最长 30 秒）。
+`GET /metrics` 提供 Prometheus 兼容计数器。
+该端点还暴露当前 pending、running、retrying 与在线 Worker 的 gauge，供队列压力看板使用。
+用 `/healthz` 做存活探针，用 `/readyz` 做就绪探针。
+调度器通过 `SetMaxPending` 施加可配置的在途任务上限；超过上限的提交返回 HTTP 429。
 
-For leader-election mode, set `JOBRAFT_NODE_ID`. The in-memory election
-registry exposes the current node/leader through `GET /cluster`; the registry
-interface is designed to be replaced by a Raft-backed implementation for
-multi-process deployments.
-With `JOBRAFT_CLUSTER_FILE`, a shared JSON file and exclusive lock provide a
-lightweight cross-process lease election. Use a consensus-backed registry for
-network partitions and larger clusters.
+要开启领导选举模式，设置 `JOBRAFT_NODE_ID`。内存选主注册表通过 `GET /cluster` 暴露当前节点/领导者；该注册表接口被设计为可替换成 Raft 后端实现，以支持多进程部署。
+设置 `JOBRAFT_CLUSTER_FILE` 时，共享 JSON 文件与排他锁提供轻量级跨进程租约选主。网络分区与更大集群应使用基于共识的注册表。
 
-`internal/cluster.ConsensusGroup` provides an embedded replicated-log
-state-machine and quorum API for deterministic tests and local integration.
-It intentionally does not claim to replace a full Raft implementation across
-untrusted networks; the `ReplicatedLog` interface is the boundary for adding
-that transport later.
+`internal/cluster.ConsensusGroup` 提供内嵌的复制日志状态机与 quorum API，用于确定性测试与本地集成。
+它刻意不宣称能在不可信网络上替代完整的 Raft 实现；`ReplicatedLog` 接口是后续接入该传输层的边界。
 
-External workers can use `pkg/workerclient`'s `Client.Run` to handle the
-register/heartbeat/claim/complete loop without manually constructing HTTP
-requests.
-Open `GET /admin` in a browser for a lightweight live management dashboard.
+外部 Worker 可用 `pkg/workerclient` 的 `Client.Run` 处理 register/heartbeat/claim/complete 循环，而无需手工构造 HTTP 请求。
+在浏览器打开 `GET /admin` 可获得轻量级实时管理看板。
 
-Deployment settings:
+部署配置：
 
-- `JOBRAFT_ADDR` (default `:8080`)
-- `JOBRAFT_WORKERS` (default `4`)
-- `JOBRAFT_STORE` (optional single-process JSON persistence path)
-- `JOBRAFT_DATABASE_URL` (optional PostgreSQL connection URL; takes precedence
-  over `JOBRAFT_STORE` and enables multi-instance atomic task claims)
-- `JOBRAFT_NODE_ID` (optional leader-election identity)
-- `JOBRAFT_CLUSTER_FILE` (optional shared registry file for multi-process leader election)
-- `JOBRAFT_MAX_PENDING` (optional in-flight task limit)
-- `JOBRAFT_LEASE_TTL` (optional worker/task lease duration, e.g. `30s`)
-- `JOBRAFT_API_TOKEN` (optional bearer/API key for management and worker APIs;
-  `/healthz` and `/readyz` remain public for probes)
+- `JOBRAFT_ADDR`（默认 `:8080`）
+- `JOBRAFT_WORKERS`（默认 `4`）
+- `JOBRAFT_STORE`（可选，单进程 JSON 持久化路径）
+- `JOBRAFT_DATABASE_URL`（可选，PostgreSQL 连接 URL；优先于 `JOBRAFT_STORE`，并启用多实例原子任务认领）
+- `JOBRAFT_NODE_ID`（可选，领导选举身份）
+- `JOBRAFT_CLUSTER_FILE`（可选，多进程领导选举的共享注册表文件）
+- `JOBRAFT_MAX_PENDING`（可选，在途任务上限）
+- `JOBRAFT_LEASE_TTL`（可选，Worker/任务租约时长，例如 `30s`）
+- `JOBRAFT_API_TOKEN`（可选，管理与 Worker API 的 bearer/API key；`/healthz` 与 `/readyz` 仍对探针公开）
 
-Invalid values for numeric, duration, storage, or cluster settings fail startup
-instead of silently falling back to an unsafe or unexpected mode.
+数值、时长、存储或集群配置的非法值会在启动时报错退出，而不是静默回退到不安全或意外的模式。
 
-Build a container with `docker build -t jobraft .` and run it with a writable
-`/data` volume for persistence.
+用 `docker build -t jobraft .` 构建容器，并用可写的 `/data` 卷运行以实现持久化。
 
-For a reproducible two-instance PostgreSQL deployment, run
-`docker compose up --build`. Operational assumptions and failure-injection
-checks are documented in `docs/operations.md`.
-The stack exposes API instances on ports `8080` and `8081`, Prometheus on
-`9090`, and Grafana on `3000` (`admin` / `local-dev-password` for local use).
-Run `go run ./cmd/jobraft-bench` after the stack is ready to execute the
-cross-instance benchmark documented in `docs/benchmark-results.md`.
-Architecture, failure semantics, and interview-ready project notes are in
-`docs/architecture.md`.
+要复现双实例 PostgreSQL 部署，运行 `docker compose up --build`。运维假设与故障注入检查见 `docs/operations.md`。
+该栈在 `8080` 与 `8081` 端口暴露 API 实例，Prometheus 在 `9090`，Grafana 在 `3000`（本地使用 `admin` / `local-dev-password`）。
+栈就绪后运行 `go run ./cmd/jobraft-bench` 执行 `docs/benchmark-results.md` 中记录的跨实例压测。
+架构、故障语义与面试向项目说明见 `docs/architecture.md`。
 
-For a deployed instance, set `JOBRAFT_API_TOKEN` and send either
-`Authorization: Bearer <token>` or `X-API-Key: <token>`. The empty-token mode is
-intended only for local development.
+对已部署实例，设置 `JOBRAFT_API_TOKEN` 并发送 `Authorization: Bearer <token>` 或 `X-API-Key: <token>`。空 token 模式仅用于本地开发。
 
-GitHub Actions runs formatting, tests, and a full build on every push and pull
-request.
+GitHub Actions 在每次 push 与 pull request 时执行格式化、测试与完整构建。
 
-## State machine
+## 状态机
 
-Tasks move from `pending` to `running`, then to `success`. A failed execution
-becomes `retrying` until its retry budget is exhausted, after which it is
-`failed`. Cancellation is terminal. Delivery is intentionally at-least-once;
-handlers should be idempotent.
+任务从 `pending` 进入 `running`，再到 `success`。一次失败执行会变为 `retrying`，直到重试预算耗尽，之后变为 `failed`。取消是终态。投递刻意采用至少一次（at-least-once）语义；处理函数应当是幂等的。
 
-The storage layer is an interface (`internal/store.Store`) with in-memory, JSON
-file, and PostgreSQL implementations. PostgreSQL uses transactions and `FOR
-UPDATE SKIP LOCKED` for atomic claims across API instances. The default binary
-uses the concurrency-safe in-memory implementation.
+存储层是一个接口（`internal/store.Store`），有内存、JSON 文件与 PostgreSQL 三种实现。PostgreSQL 使用事务与 `FOR UPDATE SKIP LOCKED` 实现跨 API 实例的原子认领。默认二进制使用并发安全的内存实现。
 
-When `JOBRAFT_STORE` points to a JSON file, tasks that were running when the
-process stopped are recovered as retryable work on the next startup.
+当 `JOBRAFT_STORE` 指向一个 JSON 文件时，进程停止时仍在运行的任务会在下次启动时被恢复为可重试的任务。

@@ -1,25 +1,16 @@
 # internal/cluster
 
-Leader election and an embedded replicated-log consensus model for scheduler
-nodes.
+面向调度器节点的领导选举，以及内嵌的复制日志共识模型。
 
-## Leader election
+## 领导选举
 
-- `Registry` is the minimal interface (`Renew`, `Leader`, `List`).
-- `MemoryRegistry` is a deterministic in-process registry for tests and local
-  clusters.
-- `FileRegistry` coordinates processes through a shared JSON file guarded by an
-  exclusive lock file; expired leases are removed on renewal so a crashed node's
-  seat is released.
-- `Elector` runs a renewal loop (at TTL / 3) and exposes `IsLeader`, which the
-  scheduler uses as a leader gate.
+- `Registry` 是最小接口（`Renew`、`Leader`、`List`）。
+- `MemoryRegistry` 是确定性的进程内注册表，用于测试与本地集群。
+- `FileRegistry` 通过共享 JSON 文件协调进程，并用排他锁文件串行化更新；续期时会移除过期租约，从而释放崩溃节点占用的席位。
+- `Elector` 运行一个续期循环（TTL / 3），并暴露 `IsLeader`，调度器将其用作领导门控。
 
-The `Registry` interface is the boundary for a Raft/etcd-backed implementation in
-production.
+`Registry` 接口是生产环境中接入 Raft/etcd 后端的边界。
 
-## Consensus model
+## 共识模型
 
-`ConsensusGroup` and `ConsensusRegistry` provide a quorum state machine over a
-`ReplicatedLog` interface for deterministic tests and local integration. They
-intentionally do not claim to replace full Raft across untrusted networks;
-`ReplicatedLog` is the seam for adding a real transport later.
+`ConsensusGroup` 与 `ConsensusRegistry` 在 `ReplicatedLog` 接口之上提供 quorum 状态机，用于确定性测试与本地集成。它们刻意不宣称能在不可信网络上替代完整 Raft；`ReplicatedLog` 是后续接入真实传输层的接缝。

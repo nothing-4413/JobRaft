@@ -1,11 +1,7 @@
 # internal/fileutil
 
-Small filesystem helpers used by the file-backed store and cluster registry.
+被文件后端存储与集群注册表使用的小型文件系统辅助函数。
 
 ## Replace
 
-`Replace(src, dst)` atomically renames `src` over `dst` across platforms. On
-Unix a single rename suffices; on Windows, where `os.Rename` cannot replace an
-existing file, it moves the destination aside to a `.bak` file first and rolls
-back on failure. Both `FileStore` and `FileRegistry` write a temporary file and
-call `Replace` to avoid leaving a partially written document.
+`Replace(src, dst)` 跨平台地将 `src` 原子重命名覆盖到 `dst`。在 Unix 上一次重命名即可；在 Windows 上 `os.Rename` 无法覆盖已存在文件，因此先把它移到 `.bak` 备份文件，失败时回滚。`FileStore` 与 `FileRegistry` 都会先写临时文件再调用 `Replace`，以避免留下半写的文档。

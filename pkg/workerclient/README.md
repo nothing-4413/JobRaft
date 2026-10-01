@@ -1,9 +1,8 @@
 # pkg/workerclient
 
-An SDK for building external JobRaft workers. Unlike the `internal/...` packages,
-this one is importable by other Go programs.
+用于构建外部 JobRaft Worker 的 SDK。与 `internal/...` 包不同，它可被其他 Go 程序导入。
 
-## Quick start
+## 快速上手
 
 ```go
 client := workerclient.Client{
@@ -12,15 +11,11 @@ client := workerclient.Client{
     APIToken: "local-dev-token",
 }
 err := client.Run(context.Background(), func(ctx context.Context, t task.Task) error {
-    // process t.Payload; return an error to fail the task
+    // 处理 t.Payload；返回 error 即让任务失败
     return nil
 })
 ```
 
-`Run` handles the register → heartbeat → long-poll claim → run → complete loop.
-While a handler runs, `runHandler` renews the task lease at roughly one third of
-its remaining TTL; if renewal fails it cancels the handler context and leaves
-the task for scheduler lease recovery rather than acknowledging optimistically.
+`Run` 处理 register → heartbeat → 长轮询 claim → run → complete 循环。处理函数运行期间，`runHandler` 会按剩余 TTL 的约三分之一续期任务租约；若续期失败，它会取消处理函数上下文，并把任务留给调度器租约恢复，而不是乐观确认。
 
-For finer control use `Register`, `Heartbeat`, `Claim`, `Complete`,
-`CompleteWithResult`, and `RenewLease` directly.
+需要更细粒度控制时，可直接使用 `Register`、`Heartbeat`、`Claim`、`Complete`、`CompleteWithResult` 与 `RenewLease`。

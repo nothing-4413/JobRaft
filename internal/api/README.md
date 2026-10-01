@@ -1,23 +1,15 @@
 # internal/api
 
-The HTTP layer. It maps the scheduler and, optionally, the cluster registry onto
-JSON endpoints and adds authentication.
+HTTP 层。它把调度器以及（可选）集群注册表映射为 JSON 端点，并加入鉴权。
 
-## Endpoints
+## 端点
 
-Task, worker, and operations routes are documented in
-[`docs/api.md`](../../docs/api.md). In short:
+任务、Worker 与运维路由见 [`docs/api.md`](../../docs/api.md)。简言之：
 
-- `POST /tasks`, `GET /tasks`, `GET /tasks/{id}`, `DELETE /tasks/{id}`,
-  `DELETE /tasks`, `POST /tasks/{id}?complete=true`
-- `POST /workers`, `POST /workers/{id}`, `POST /workers/{id}/claim`,
-  `POST /workers/{id}/tasks/renew`, `GET /workers`
-- `GET /healthz`, `GET /readyz`, `GET /metrics`, `GET /cluster`, `GET /admin`
+- `POST /tasks`、`GET /tasks`、`GET /tasks/{id}`、`DELETE /tasks/{id}`、`DELETE /tasks`、`POST /tasks/{id}?complete=true`
+- `POST /workers`、`POST /workers/{id}`、`POST /workers/{id}/claim`、`POST /workers/{id}/tasks/renew`、`GET /workers`
+- `GET /healthz`、`GET /readyz`、`GET /metrics`、`GET /cluster`、`GET /admin`
 
-## Authentication
+## 鉴权
 
-Construct the server with `NewWithToken` (or `NewWithClusterToken`). When a
-token is set, every route except `/healthz` and `/readyz` requires
-`Authorization: Bearer <token>` or `X-API-Key: <token>`. An empty token disables
-authentication for local development. `/admin` is a small self-refreshing HTML
-dashboard.
+用 `NewWithToken`（或 `NewWithClusterToken`）构造服务器。设置 token 后，除 `/healthz` 与 `/readyz` 外的所有路由都要求 `Authorization: Bearer <token>` 或 `X-API-Key: <token>`。空 token 会关闭鉴权，仅用于本地开发。`/admin` 是一个小的自刷新 HTML 看板。

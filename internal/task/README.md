@@ -1,19 +1,13 @@
 # internal/task
 
-The domain model shared by every other package. It defines the `Task` struct, the
-task lifecycle (`Status`), the `RetryPolicy`, and the validation rules the
-scheduler and stores rely on.
+被其他所有包共享的领域模型。它定义了 `Task` 结构体、任务生命周期（`Status`）、`RetryPolicy`，以及调度器与存储所依赖的校验规则。
 
-## Contents
+## 内容
 
-- `Status` — the six lifecycle states: `pending`, `running`, `success`,
-  `retrying`, `failed`, and `canceled`.
-- `Task` — a unit of work with idempotency key, priority, dependencies, payload,
-  result, retry policy, schedule, timeout, lease fields, and timestamps.
-- `RetryPolicy` — `max_attempts` and `backoff`.
-- `Validate` — enforces the required fields and non-negative durations.
-- `IsTerminal` — reports whether no further state transitions are expected.
+- `Status` —— 六种生命周期状态：`pending`、`running`、`success`、`retrying`、`failed`、`canceled`。
+- `Task` —— 一个工作单元，包含幂等键、优先级、依赖、负载、结果、重试策略、周期、超时、租约字段与时间戳。
+- `RetryPolicy` —— `max_attempts` 与 `backoff`。
+- `Validate` —— 强制调度器与存储依赖的必填字段与非负时长。
+- `IsTerminal` —— 报告是否不再期望进一步的状态迁移。
 
-This package is `internal`, so it is consumed only inside the module. Its JSON
-tags are the wire format served by the HTTP API and therefore the source of truth
-for client payloads.
+该包是 `internal` 的，因此只在模块内部消费。它的 JSON 标签就是 HTTP API 服务的线上格式，因而是客户端负载的权威来源。
