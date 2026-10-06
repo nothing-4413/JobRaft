@@ -1,0 +1,8 @@
+# Keep the repository LF-normalized: CI runners are Linux and gofmt requires
+# LF. Windows checkouts get CRLF in the worktree without touching the index.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
