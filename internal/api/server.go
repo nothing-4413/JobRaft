@@ -234,6 +234,15 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// An idle claim long poll waits between attempts. It starts short so a task
+// submitted right after an empty poll is still picked up quickly, and backs off
+// so an idle worker does not keep opening claim transactions that lock a worker
+// row and scan the due index for nothing.
+const (
+	claimRetryMin = 50 * time.Millisecond
+	claimRetryMax = 500 * time.Millisecond
+)
+
 func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -252,20 +261,41 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var t task.Task
+	// An idle long poll retries Claim until the deadline. A fixed retry interval
+	// makes every idle worker open one claim transaction per interval, and each
+	// of those locks a worker row and scans the due index for nothing. Backing
+	// off keeps a queue that fills up snappy while an idle worker settles down
+	// to a couple of polls per second. The pause is never longer than the wait
+	// the caller asked for.
+	interval := claimRetryMin
 	for {
 		t, err = s.scheduler.Claim(path)
 		if err == nil {
 			writeJSON(w, http.StatusOK, t)
 			return
 		}
-		if err != scheduler.ErrNoTask || !deadline.After(time.Now()) {
+		if err != scheduler.ErrNoTask {
 			break
 		}
-		timer := time.NewTimer(100 * time.Millisecond)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		if interval > remaining {
+			interval = remaining
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-r.Context().Done():
+			timer.Stop()
 			return
 		case <-timer.C:
+		}
+		if interval < claimRetryMax {
+			interval *= 2
+			if interval > claimRetryMax {
+				interval = claimRetryMax
+			}
 		}
 	}
 	if err == scheduler.ErrNoTask {
@@ -274,9 +304,7 @@ func (s *Server) workerClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-		return
 	}
-	writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 }
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {

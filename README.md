@@ -44,7 +44,7 @@ curl -X POST http://localhost:8080/tasks \
 可通过 `POST /workers` 与 `POST /workers/{id}` 注册并保活 Worker；用 `GET /workers` 查看。
 外部 Worker 用 `POST /workers/{id}/claim` 拉取任务，并通过 `POST /tasks/{id}?complete=true` 携带 `worker_id`、`lease_token` 与可选的 `error` 字段确认完成。心跳会续期该 Worker 的活动任务租约。
 成功的 Worker 还可以发送一个 JSON `result`；它会被存储在任务上，并通过任务查询/列表 API 返回。SDK 以 `CompleteWithResult` 暴露该能力。
-在 claim 请求上加 `?wait=10s` 可进行长轮询（最长 30 秒）。
+在 claim 请求上加 `?wait=10s` 可进行长轮询（最长 30 秒）。空闲时重试间隔从 50ms 指数退避到 500ms，因此一直拉不到任务的 Worker 不会持续冲击存储；退避不会超过调用方请求的等待时长。
 `GET /metrics` 提供 Prometheus 兼容计数器。
 该端点还暴露当前 pending、running、retrying 与在线 Worker 的 gauge，供队列压力看板使用。
 用 `/healthz` 做存活探针，用 `/readyz` 做就绪探针。
