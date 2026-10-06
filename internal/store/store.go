@@ -38,6 +38,13 @@ type AtomicClaimer interface {
 	ClaimDue(workerID string, leaseTTL time.Duration) (task.Task, error)
 }
 
+// InFlightCounter reports how many tasks are queued or running. Backpressure
+// needs this number on every submission, so a store that can answer it without
+// materialising every record keeps submission cost independent of queue depth.
+type InFlightCounter interface {
+	CountInFlight() (int, error)
+}
+
 // Worker is a worker liveness lease. Persistent implementations make workers
 // visible to every API instance behind a load balancer.
 type Worker struct {
@@ -114,6 +121,19 @@ func (s *MemoryStore) List() ([]task.Task, error) {
 		result = append(result, clone(t))
 	}
 	return result, nil
+}
+
+// CountInFlight avoids cloning the queue just to size it.
+func (s *MemoryStore) CountInFlight() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, t := range s.tasks {
+		if IsInFlight(t.Status) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *MemoryStore) Update(t task.Task) error {
@@ -247,6 +267,12 @@ func clone(t task.Task) task.Task {
 }
 
 func timePtr(value time.Time) *time.Time { return &value }
+
+// IsInFlight reports whether a task still occupies a slot in the queue:
+// waiting to run, being retried, or executing right now.
+func IsInFlight(status task.Status) bool {
+	return status == task.StatusPending || status == task.StatusRetrying || status == task.StatusRunning
+}
 
 // Due returns pending/retrying tasks whose scheduled time has arrived.
 func Due(tasks []task.Task, now time.Time) []task.Task {

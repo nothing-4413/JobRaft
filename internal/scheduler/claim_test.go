@@ -72,3 +72,43 @@ func TestClaimSkipsTaskFinishedDuringListing(t *testing.T) {
 		t.Fatalf("completed task was rewritten: status=%s run_count=%d", current.Status, current.RunCount)
 	}
 }
+
+// TestClaimOrder pins the delivery order the single-node claim uses: priority
+// first, then the scheduled time, then the id. It matches the ORDER BY of the
+// PostgreSQL claim, and the id tie-break makes the order deterministic where the
+// previous copy-and-sort left equal candidates in Go map iteration order.
+func TestClaimOrder(t *testing.T) {
+	memory := store.NewMemory()
+	now := time.Now().UTC()
+	items := []task.Task{
+		{ID: "b-early", Priority: 1, RunAt: now.Add(-time.Minute)},
+		{ID: "a-late", Priority: 1, RunAt: now},
+		{ID: "high", Priority: 5, RunAt: now},
+		{ID: "b-same", Priority: 3, RunAt: now},
+		{ID: "a-same", Priority: 3, RunAt: now},
+	}
+	for _, item := range items {
+		item.Name, item.Status, item.CreatedAt = "benchmark", task.StatusPending, now
+		item.Retry = task.RetryPolicy{MaxAttempts: 1}
+		if err := memory.Create(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(memory, 1)
+	if _, err := s.RegisterWorker("worker"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"high", "a-same", "b-same", "b-early", "a-late"}
+	for _, id := range want {
+		claimed, err := s.Claim("worker")
+		if err != nil {
+			t.Fatalf("claim %s: %v", id, err)
+		}
+		if claimed.ID != id {
+			t.Fatalf("claim order: got %s, want %s", claimed.ID, id)
+		}
+	}
+	if _, err := s.Claim("worker"); !errors.Is(err, ErrNoTask) {
+		t.Fatalf("expected the queue to be drained, got %v", err)
+	}
+}

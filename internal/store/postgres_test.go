@@ -28,6 +28,28 @@ func newPostgresTestStore(t *testing.T) *PostgresStore {
 	return s
 }
 
+func TestPostgresCountInFlight(t *testing.T) {
+	s := newPostgresTestStore(t)
+	now := time.Now().UTC()
+	want := 0
+	for status, counts := range backpressureCounts() {
+		item := task.Task{ID: "inflight-" + string(status), Name: "demo", Status: status, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}
+		if err := s.Create(item); err != nil {
+			t.Fatal(err)
+		}
+		if counts {
+			want++
+		}
+	}
+	got, err := s.CountInFlight()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("CountInFlight = %d, want %d", got, want)
+	}
+}
+
 func TestPostgresClaimDueIsAtomic(t *testing.T) {
 	s := newPostgresTestStore(t)
 	now := time.Now().UTC()

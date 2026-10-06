@@ -90,6 +90,19 @@ func (s *FileStore) List() ([]task.Task, error) {
 	return result, nil
 }
 
+// CountInFlight avoids cloning the queue just to size it.
+func (s *FileStore) CountInFlight() (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, t := range s.tasks {
+		if IsInFlight(t.Status) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (s *FileStore) Update(t task.Task) error {
 	if err := t.Validate(); err != nil {
 		return err

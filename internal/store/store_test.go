@@ -122,3 +122,61 @@ func TestFileStoreDeletePersists(t *testing.T) {
 		t.Fatalf("unrelated task was lost: %v", err)
 	}
 }
+
+// backpressureCounts pins which statuses occupy a queue slot, since the
+// submission limit is enforced from this count alone now.
+func backpressureCounts() map[task.Status]bool {
+	return map[task.Status]bool{
+		task.StatusPending:  true,
+		task.StatusRetrying: true,
+		task.StatusRunning:  true,
+		task.StatusSuccess:  false,
+		task.StatusFailed:   false,
+		task.StatusCanceled: false,
+	}
+}
+
+func TestMemoryStoreCountInFlight(t *testing.T) {
+	s := NewMemory()
+	want := 0
+	for status, counts := range backpressureCounts() {
+		item := task.Task{ID: string(status), Name: "demo", Status: status, RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}
+		if err := s.Create(item); err != nil {
+			t.Fatal(err)
+		}
+		if counts {
+			want++
+		}
+	}
+	got, err := s.CountInFlight()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("CountInFlight = %d, want %d", got, want)
+	}
+}
+
+func TestFileStoreCountInFlight(t *testing.T) {
+	s, err := NewFile(t.TempDir() + "/tasks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for status, counts := range backpressureCounts() {
+		item := task.Task{ID: string(status), Name: "demo", Status: status, RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}
+		if err := s.Create(item); err != nil {
+			t.Fatal(err)
+		}
+		if counts {
+			want++
+		}
+	}
+	got, err := s.CountInFlight()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("CountInFlight = %d, want %d", got, want)
+	}
+}

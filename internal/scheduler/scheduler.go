@@ -180,15 +180,9 @@ func (s *Scheduler) Submit(t task.Task) error {
 		}
 	}
 	if s.maxPending > 0 {
-		items, err := s.store.List()
+		inFlight, err := s.inFlightCount()
 		if err != nil {
 			return err
-		}
-		inFlight := 0
-		for _, item := range items {
-			if item.Status == task.StatusPending || item.Status == task.StatusRetrying || item.Status == task.StatusRunning {
-				inFlight++
-			}
 		}
 		if inFlight >= s.maxPending {
 			return ErrBackpressure
@@ -300,6 +294,26 @@ func (s *Scheduler) observeQueueLatency(t task.Task) {
 	s.latencyMu.Unlock()
 }
 
+// inFlightCount sizes the queue for backpressure. Stores that can answer
+// without materialising every record are asked directly; the listing fallback
+// keeps custom stores working, at a cost that grows with the queue.
+func (s *Scheduler) inFlightCount() (int, error) {
+	if counter, ok := s.store.(store.InFlightCounter); ok {
+		return counter.CountInFlight()
+	}
+	items, err := s.store.List()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, item := range items {
+		if store.IsInFlight(item.Status) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // Claim reserves one eligible task for an external worker. The returned lease
 // token must be supplied to CompleteTask.
 func (s *Scheduler) Claim(workerID string) (task.Task, error) {
@@ -323,7 +337,17 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 	if err != nil {
 		return task.Task{}, err
 	}
-	for _, t := range store.Due(items, time.Now()) {
+	now := time.Now()
+	// skip records the candidates this claim has already ruled out, so the next
+	// pass picks the following one instead of retrying the same task.
+	skip := make([]bool, len(items))
+	for {
+		index, ok := bestDue(items, now, skip)
+		if !ok {
+			return task.Task{}, ErrNoTask
+		}
+		skip[index] = true
+		t := items[index]
 		ready, dependencyErr := s.dependenciesReady(t)
 		if dependencyErr != "" {
 			s.failUnreadyTask(t, dependencyErr)
@@ -353,7 +377,34 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 		s.observeQueueLatency(claimed)
 		return claimed, nil
 	}
-	return task.Task{}, ErrNoTask
+}
+
+// bestDue returns the index of the next claimable candidate, ordered the way the
+// PostgreSQL claim orders its candidates: priority first, then the scheduled
+// time, then the id as a deterministic tie-break. It scans once and copies
+// nothing, where store.Due would copy and sort the whole queue for every claim.
+func bestDue(tasks []task.Task, now time.Time, skip []bool) (int, bool) {
+	best := -1
+	for i, t := range tasks {
+		claimable := t.Status == task.StatusPending || t.Status == task.StatusRetrying
+		if skip[i] || !claimable || t.RunAt.After(now) {
+			continue
+		}
+		if best < 0 || dueBefore(t, tasks[best]) {
+			best = i
+		}
+	}
+	return best, best >= 0
+}
+
+func dueBefore(a, b task.Task) bool {
+	if a.Priority != b.Priority {
+		return a.Priority > b.Priority
+	}
+	if !a.RunAt.Equal(b.RunAt) {
+		return a.RunAt.Before(b.RunAt)
+	}
+	return a.ID < b.ID
 }
 
 // errClaimLost reports that a candidate stopped being claimable between the

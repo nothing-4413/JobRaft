@@ -96,6 +96,16 @@ func (s *PostgresStore) List() ([]task.Task, error) {
 	return items, rows.Err()
 }
 
+// CountInFlight asks the database for the queue depth instead of transferring
+// and decoding every row, which is what a List() based count would cost.
+func (s *PostgresStore) CountInFlight() (int, error) {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM jobraft_tasks WHERE status IN ('pending', 'retrying', 'running')`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (s *PostgresStore) Update(t task.Task) error {
 	if err := t.Validate(); err != nil {
 		return err
