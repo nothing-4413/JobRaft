@@ -11,6 +11,51 @@ import (
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
 
+// conflictOnRollbackStore stands in for a task that was canceled or reaped
+// while it waited for a free worker: it refuses the conditional write that
+// would move the task back to pending.
+type conflictOnRollbackStore struct {
+	*store.MemoryStore
+	rollbackAttempts int32
+}
+
+func (s *conflictOnRollbackStore) UpdateIfState(id string, status task.Status, token string, t task.Task) error {
+	if t.Status == task.StatusPending {
+		atomic.AddInt32(&s.rollbackAttempts, 1)
+		return store.ErrConflict
+	}
+	return s.MemoryStore.UpdateIfState(id, status, token, t)
+}
+
+func TestDispatchRollbackIsConditional(t *testing.T) {
+	st := &conflictOnRollbackStore{MemoryStore: store.NewMemory()}
+	s := New(st, 1)
+	s.SetLeaseTTL(time.Hour)
+	if err := s.Register("demo", func(context.Context, task.Task) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// Fill the worker queue so dispatch cannot hand the task to a worker.
+	for i := 0; i < cap(s.queue); i++ {
+		s.queue <- task.Task{ID: "occupant"}
+	}
+	if err := st.Create(task.Task{ID: "rollback", Name: "demo", Status: task.StatusPending, RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.dispatch()
+
+	if atomic.LoadInt32(&st.rollbackAttempts) == 0 {
+		t.Fatal("dispatch rolled the task back with an unconditional write")
+	}
+	got, err := st.Get("rollback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != task.StatusRunning {
+		t.Fatalf("rollback overwrote a concurrent change: status = %s, want running", got.Status)
+	}
+}
+
 func TestSchedulerRetriesAndSucceeds(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	attempts := 0

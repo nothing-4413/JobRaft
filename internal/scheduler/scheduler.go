@@ -724,10 +724,17 @@ func (s *Scheduler) dispatch() {
 			select {
 			case s.queue <- t:
 			default:
-				// Leave the task retryable when all workers are busy.
+				// Leave the task retryable when all workers are busy. Guard the
+				// rollback exactly like the claim above it: the task can be
+				// canceled or reaped while it waits for a free worker, and a
+				// blind write would put it back in the queue behind our back.
 				t.Status = task.StatusPending
 				t.Attempts--
-				_ = s.store.Update(t)
+				if updater, ok := s.store.(store.ConditionalUpdater); ok {
+					_ = updater.UpdateIfState(t.ID, task.StatusRunning, t.LeaseToken, t)
+				} else {
+					_ = s.store.Update(t)
+				}
 				s.mu.Lock()
 				delete(s.running, t.ID)
 				s.mu.Unlock()
