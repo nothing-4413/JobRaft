@@ -27,6 +27,20 @@ func (s *conflictOnRollbackStore) UpdateIfState(id string, status task.Status, t
 	return s.MemoryStore.UpdateIfState(id, status, token, t)
 }
 
+// waitPast sleeps until a lease deadline is behind us. A test that needs an
+// expired lease should wait for that deadline instead of guessing a fixed sleep:
+// the lease already has an exact end, and on a slow runner a guessed sleep can
+// cover the wrong window.
+func waitPast(t *testing.T, deadline *time.Time) {
+	t.Helper()
+	if deadline == nil {
+		t.Fatal("no lease deadline to wait for")
+	}
+	if d := time.Until(*deadline); d > 0 {
+		time.Sleep(d + 2*time.Millisecond)
+	}
+}
+
 func TestDispatchRollbackIsConditional(t *testing.T) {
 	st := &conflictOnRollbackStore{MemoryStore: store.NewMemory()}
 	s := New(st, 1)
@@ -214,7 +228,9 @@ func TestExternalWorkerRenewsLease(t *testing.T) {
 
 func TestExpiredWorkerCannotCompleteTask(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	s.SetLeaseTTL(5 * time.Millisecond)
+	// The claim has to land inside the worker lease, so the TTL needs room for
+	// the register/claim round trip; the expiry itself is waited out below.
+	s.SetLeaseTTL(200 * time.Millisecond)
 	if err := s.Submit(task.Task{ID: "expired-complete", Name: "remote", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +239,9 @@ func TestExpiredWorkerCannotCompleteTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// CompleteTask gates on the task lease (validLease in scheduler.go), not on
+	// the worker lease, so wait for that deadline rather than sleeping blind.
+	waitPast(t, claimed.LeaseUntil)
 	if err := s.CompleteTask(w.ID, claimed.ID, claimed.LeaseToken, ""); err == nil {
 		t.Fatal("expected expired lease completion to fail")
 	}
@@ -392,7 +410,10 @@ func TestWorkersExcludesExpiredLeases(t *testing.T) {
 
 func TestExpiredClaimCanBeReclaimed(t *testing.T) {
 	s := New(store.NewMemory(), 1)
-	s.SetLeaseTTL(5 * time.Millisecond)
+	// The first claim has to land inside the worker lease, so the TTL needs room
+	// for the register/submit/claim round trip. The reclaim phase below waits for
+	// the real deadline instead of guessing how long expiry takes.
+	s.SetLeaseTTL(200 * time.Millisecond)
 	if _, err := s.RegisterWorker("worker-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +424,7 @@ func TestExpiredClaimCanBeReclaimed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(10 * time.Millisecond)
+	waitPast(t, claimed.LeaseUntil)
 	if _, err := s.RegisterWorker("worker-1"); err != nil {
 		t.Fatal(err)
 	}
