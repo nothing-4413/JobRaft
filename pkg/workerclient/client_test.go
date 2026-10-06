@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,20 +87,49 @@ func TestClientRenewsLease(t *testing.T) {
 	}
 }
 
+// renewalCountingStore reports the first lease renewal that reaches the store.
+// It lets the test below wait for a renewal instead of racing a fixed sleep
+// against the lease TTL, which made the test fail whenever the machine was
+// slow enough that the client missed a renewal before the lease lapsed.
+type renewalCountingStore struct {
+	*store.MemoryStore
+	renewed chan struct{}
+	once    sync.Once
+}
+
+func newRenewalCountingStore() *renewalCountingStore {
+	return &renewalCountingStore{MemoryStore: store.NewMemory(), renewed: make(chan struct{})}
+}
+
+func (s *renewalCountingStore) UpdateIfLease(id string, token string, t task.Task) error {
+	err := s.MemoryStore.UpdateIfLease(id, token, t)
+	if err == nil {
+		s.once.Do(func() { close(s.renewed) })
+	}
+	return err
+}
+
 func TestClientRunRenewsLongTaskLease(t *testing.T) {
-	s := scheduler.New(store.NewMemory(), 1)
-	s.SetLeaseTTL(20 * time.Millisecond)
+	st := newRenewalCountingStore()
+	s := scheduler.New(st, 1)
+	s.SetLeaseTTL(300 * time.Millisecond)
 	if err := s.Submit(task.Task{ID: "long-client", Name: "job", Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(api.New(s).Handler())
 	defer ts.Close()
 	c := &Client{BaseURL: ts.URL, WorkerID: "long-worker", PollInterval: 5 * time.Millisecond}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
-	err := c.Run(ctx, func(context.Context, task.Task) error {
-		time.Sleep(50 * time.Millisecond)
-		return nil
+	err := c.Run(ctx, func(handlerCtx context.Context, _ task.Task) error {
+		// Keep working until the client has actually renewed the lease, so a
+		// client that never renews fails this test instead of passing by luck.
+		select {
+		case <-st.renewed:
+			return nil
+		case <-handlerCtx.Done():
+			return handlerCtx.Err()
+		}
 	})
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected run to stop on context deadline, got %v", err)
