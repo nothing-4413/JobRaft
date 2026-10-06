@@ -33,6 +33,14 @@ jobs:
         env:
           JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
         run: go test ./...
+      # Exercises the store-cost harness against a real server so the seeding
+      # and measurement code cannot rot unnoticed. The numbers themselves are
+      # read from a local run (scripts/store-cost.sh), not from CI logs.
+      - name: Measure store operations (depth 1000)
+        env:
+          JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
+          JOBRAFT_BENCH_CLAIM: '1'
+        run: go test ./internal/store -run 'TestPostgresOperationCost/(depth1000|dependencies)' -v -count=1
       - name: Race test
         env:
           JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
