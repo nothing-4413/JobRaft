@@ -66,3 +66,59 @@ func TestMemoryStoreConditionalStateUpdate(t *testing.T) {
 		t.Fatalf("conditional state update did not apply: %s", got.Status)
 	}
 }
+
+func TestMemoryStoreDeleteRemovesRecord(t *testing.T) {
+	s := NewMemory()
+	item := task.Task{ID: "gone", Name: "demo", RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}
+	if err := s.Create(item); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(item.ID); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	if err := s.Delete(item.ID); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound on repeated delete, got %v", err)
+	}
+	items, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected empty store, got %d tasks", len(items))
+	}
+}
+
+func TestFileStoreDeletePersists(t *testing.T) {
+	path := t.TempDir() + "/tasks.json"
+	s, err := NewFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := task.Task{ID: "keep", Name: "demo", RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}
+	drop := task.Task{ID: "drop", Name: "demo", RunAt: time.Now(), Retry: task.RetryPolicy{MaxAttempts: 1}}
+	if err := s.Create(keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(drop); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(drop.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(drop.ID); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound on repeated delete, got %v", err)
+	}
+	reopened, err := NewFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.Get(drop.ID); err != ErrNotFound {
+		t.Fatalf("delete was not persisted, got %v", err)
+	}
+	if _, err := reopened.Get(keep.ID); err != nil {
+		t.Fatalf("unrelated task was lost: %v", err)
+	}
+}

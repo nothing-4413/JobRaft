@@ -44,8 +44,10 @@ func main() {
 	defer cancel()
 	client := &http.Client{Timeout: 15 * time.Second}
 	start := time.Now()
-	if err := cleanupBenchmarkTasks(ctx, client, endpoints[0], token); err != nil {
-		fatal(err)
+	for _, endpoint := range endpoints {
+		if err := cleanupBenchmarkTasks(ctx, client, endpoint, token); err != nil {
+			fatal(err)
+		}
 	}
 	if err := submit(ctx, client, endpoints, token, total, submitParallelism); err != nil {
 		fatal(err)
@@ -64,22 +66,26 @@ func main() {
 			}
 		}()
 	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+	workDone := make(chan struct{})
+	go func() { wg.Wait(); close(workDone) }()
 	select {
-	case <-done:
+	case <-workDone:
 	case <-ctx.Done():
 		fatal(fmt.Errorf("benchmark timed out after %s", timeout))
 	}
-	select {
-	case err := <-errCh:
+	if err := firstError(errCh); err != nil {
 		fatal(err)
-	default:
 	}
-	if got := atomic.LoadInt64(&completed); got != int64(total) {
+	// Every worker checks the completion counter before claiming, so the run can
+	// overshoot the target by up to workers-1 tasks: several workers pass the check
+	// on the same tick and each finishes one more task. Only a shortfall is a real
+	// problem, and duplicate_ids reports the other failure mode, a server that
+	// handed the same task to more than one worker.
+	if got := atomic.LoadInt64(&completed); got < int64(total) {
 		fatal(fmt.Errorf("completed %d of %d tasks", got, total))
 	}
 	elapsed := time.Since(start)
+	reportDuplicateCompletions()
 	fmt.Printf("submitted=%d submit_duration=%s completed=%d elapsed=%s throughput=%.2f tasks/s\n", total, submitFinished.Sub(start).Round(time.Millisecond), completed, elapsed.Round(time.Millisecond), float64(total)/elapsed.Seconds())
 	for _, endpoint := range endpoints {
 		if metrics, err := get(ctx, client, endpoint+"/metrics", token); err == nil {
@@ -88,6 +94,11 @@ func main() {
 	}
 }
 
+// cleanupBenchmarkTasks removes records from an earlier run so this run's counts
+// are not polluted by leftovers. purge=true deletes them outright: a plain DELETE
+// only cancels, which leaves the records behind and lets the next run count them
+// a second time. Every endpoint is cleaned because two APIs with separate stores
+// (the in-memory configuration) do not share a queue.
 func cleanupBenchmarkTasks(ctx context.Context, client *http.Client, endpoint, token string) error {
 	var items []task.Task
 	if err := getJSON(ctx, client, endpoint+"/tasks?name=benchmark&limit=100000", token, &items); err != nil {
@@ -100,7 +111,23 @@ func cleanupBenchmarkTasks(ctx context.Context, client *http.Client, endpoint, t
 	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
-	return requestJSON(ctx, client, http.MethodDelete, endpoint+"/tasks", token, map[string]interface{}{"ids": ids}, http.StatusOK, nil)
+	return requestJSON(ctx, client, http.MethodDelete, endpoint+"/tasks?purge=true", token, map[string]interface{}{"ids": ids}, http.StatusOK, nil)
+}
+
+// firstError drains every recorded worker failure so no error is silently lost
+// when more than one worker fails before the run shuts down.
+func firstError(errCh <-chan error) error {
+	var first error
+	for {
+		select {
+		case err := <-errCh:
+			if first == nil {
+				first = err
+			}
+		default:
+			return first
+		}
+	}
 }
 
 func parseEndpoints(value string) []string {
@@ -155,6 +182,10 @@ func submit(ctx context.Context, client *http.Client, endpoints []string, token 
 	}
 }
 
+// runWorker drives one external worker until the run has delivered every task.
+// The completion request goes back to the endpoint that granted the claim: with
+// per-instance stores the lease only exists on that instance, and even with a
+// shared database keeping the pair on one endpoint measures a realistic client.
 func runWorker(ctx context.Context, client *http.Client, endpoints []string, token, workerID string, total int, completed *int64, offset int) error {
 	if err := postJSON(ctx, client, endpoints[offset%len(endpoints)]+"/workers", token, map[string]string{"id": workerID}, http.StatusCreated, nil); err != nil {
 		return err
@@ -175,13 +206,43 @@ func runWorker(ctx context.Context, client *http.Client, endpoints []string, tok
 		if status != http.StatusOK {
 			return fmt.Errorf("claim returned HTTP %d", status)
 		}
+		// Complete every claim in hand: a dropped running task times out and gets
+		// retried, which corrupts the throughput number.
 		body := map[string]string{"worker_id": workerID, "lease_token": claimed.LeaseToken}
-		if err := postJSON(ctx, client, endpoints[(offset+request+1)%len(endpoints)]+"/tasks/"+url.PathEscape(claimed.ID)+"?complete=true", token, body, http.StatusNoContent, nil); err != nil {
+		if err := postJSON(ctx, client, endpoint+"/tasks/"+url.PathEscape(claimed.ID)+"?complete=true", token, body, http.StatusNoContent, nil); err != nil {
 			return err
 		}
+		recordCompletion(claimed.ID)
 		atomic.AddInt64(completed, 1)
 	}
 	return nil
+}
+
+var (
+	completionMu    sync.Mutex
+	completionCount = map[string]int{}
+)
+
+func recordCompletion(id string) {
+	completionMu.Lock()
+	completionCount[id]++
+	completionMu.Unlock()
+}
+
+func reportDuplicateCompletions() {
+	completionMu.Lock()
+	defer completionMu.Unlock()
+	duplicates := 0
+	worst := 0
+	for _, count := range completionCount {
+		if count > 1 {
+			duplicates++
+		}
+		if count > worst {
+			worst = count
+		}
+	}
+	fmt.Printf("unique_tasks_completed=%d duplicate_ids=%d max_completions_per_id=%d\n", len(completionCount), duplicates, worst)
 }
 
 func postJSON(ctx context.Context, client *http.Client, endpoint, token string, body interface{}, expected int, out interface{}) error {

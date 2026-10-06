@@ -20,6 +20,9 @@ type Store interface {
 	Get(string) (task.Task, error)
 	List() ([]task.Task, error)
 	Update(task.Task) error
+	// Delete removes a task record. It returns ErrNotFound when the task does
+	// not exist, so callers can distinguish a purged record from a missing one.
+	Delete(string) error
 }
 
 // ConditionalUpdater atomically updates a task only when its lease token still
@@ -123,6 +126,18 @@ func (s *MemoryStore) Update(t task.Task) error {
 		return ErrNotFound
 	}
 	s.tasks[t.ID] = clone(t)
+	return nil
+}
+
+// Delete removes the task record entirely, unlike Cancel which keeps the task
+// visible in its terminal canceled state.
+func (s *MemoryStore) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tasks[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.tasks, id)
 	return nil
 }
 

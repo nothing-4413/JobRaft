@@ -96,3 +96,28 @@ func TestPostgresClaimFailsDependentTask(t *testing.T) {
 		t.Fatalf("child = %+v, %v", got, err)
 	}
 }
+
+func TestPostgresDeleteRemovesRecord(t *testing.T) {
+	s := newPostgresTestStore(t)
+	now := time.Now().UTC()
+	keep := task.Task{ID: "delete-keep", Name: "demo", Status: task.StatusPending, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}
+	drop := task.Task{ID: "delete-drop", Name: "demo", Status: task.StatusPending, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}
+	if err := s.Create(keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(drop); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(drop.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(drop.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	if err := s.Delete(drop.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on repeated delete, got %v", err)
+	}
+	if _, err := s.Get(keep.ID); err != nil {
+		t.Fatalf("unrelated task was lost: %v", err)
+	}
+}

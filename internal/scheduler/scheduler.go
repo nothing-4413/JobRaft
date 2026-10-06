@@ -28,6 +28,17 @@ type Metrics struct {
 
 var queueLatencyBounds = [...]float64{0.1, 1, 5, 10, 15, 30, 60}
 
+// taskIDCounter disambiguates tasks created within the same clock tick. A
+// nanosecond timestamp alone collides under concurrent submission: two callers
+// can read the same time.Now() and the second task is rejected as a duplicate.
+var taskIDCounter uint64
+
+// newTaskID mirrors the API layer's generator so in-process submissions stay
+// sortable and collision-resistant without going through the HTTP handler.
+func newTaskID() string {
+	return fmt.Sprintf("task-%d-%06d", time.Now().UnixNano(), atomic.AddUint64(&taskIDCounter, 1)%1_000_000)
+}
+
 type Scheduler struct {
 	store                                           store.Store
 	workers                                         int
@@ -184,7 +195,7 @@ func (s *Scheduler) Submit(t task.Task) error {
 		}
 	}
 	if t.ID == "" {
-		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
+		t.ID = newTaskID()
 	}
 	if t.RunAt.IsZero() {
 		t.RunAt = time.Now()
@@ -315,9 +326,7 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 	for _, t := range store.Due(items, time.Now()) {
 		ready, dependencyErr := s.dependenciesReady(t)
 		if dependencyErr != "" {
-			now := time.Now()
-			t.Status, t.LastError, t.FinishedAt = task.StatusFailed, dependencyErr, &now
-			_ = s.store.Update(t)
+			s.failUnreadyTask(t, dependencyErr)
 			continue
 		}
 		if !ready {
@@ -331,19 +340,71 @@ func (s *Scheduler) Claim(workerID string) (task.Task, error) {
 		}
 		s.running[t.ID] = nil
 		s.mu.Unlock()
-		now := time.Now()
-		t.Status, t.Attempts, t.StartedAt = task.StatusRunning, t.Attempts+1, &now
-		t.WorkerID, t.LeaseUntil, t.LeaseToken = workerID, timePtr(now.Add(s.leaseTTL)), fmt.Sprintf("%d-%s", now.UnixNano(), t.ID)
-		if err := s.store.Update(t); err != nil {
+		claimed, err := s.commitClaim(workerID, t.ID)
+		if err != nil {
 			s.mu.Lock()
 			delete(s.running, t.ID)
 			s.mu.Unlock()
+			if errors.Is(err, errClaimLost) {
+				continue
+			}
 			return task.Task{}, err
 		}
-		s.observeQueueLatency(t)
-		return t, nil
+		s.observeQueueLatency(claimed)
+		return claimed, nil
 	}
 	return task.Task{}, ErrNoTask
+}
+
+// errClaimLost reports that a candidate stopped being claimable between the
+// listing and the commit, so the caller should move on to the next candidate.
+var errClaimLost = errors.New("task is no longer claimable")
+
+// commitClaim turns one listed candidate into a running task and returns the
+// stored record. The listing Claim walks is a snapshot, so by the time a worker
+// commits to a task a concurrent claimant may already have claimed and even
+// completed it. Re-reading the record and writing it back under a state guard
+// keeps the claim atomic, which is what stops a stale snapshot from resurrecting
+// a finished task and handing the same task to several workers.
+func (s *Scheduler) commitClaim(workerID, id string) (task.Task, error) {
+	current, err := s.store.Get(id)
+	if err != nil {
+		return task.Task{}, errClaimLost
+	}
+	if current.Status != task.StatusPending && current.Status != task.StatusRetrying {
+		return task.Task{}, errClaimLost
+	}
+	now := time.Now()
+	if current.RunAt.After(now) {
+		return task.Task{}, errClaimLost
+	}
+	previousStatus, previousToken := current.Status, current.LeaseToken
+	current.Status, current.Attempts, current.StartedAt = task.StatusRunning, current.Attempts+1, &now
+	current.WorkerID, current.LeaseUntil, current.LeaseToken = workerID, timePtr(now.Add(s.leaseTTL)), fmt.Sprintf("%d-%s", now.UnixNano(), id)
+	var updateErr error
+	if updater, ok := s.store.(store.ConditionalUpdater); ok {
+		updateErr = updater.UpdateIfState(id, previousStatus, previousToken, current)
+	} else {
+		updateErr = s.store.Update(current)
+	}
+	if updateErr != nil {
+		return task.Task{}, errClaimLost
+	}
+	return current, nil
+}
+
+// failUnreadyTask fails a task whose dependency can no longer succeed. The write
+// is guarded by the state the task was listed in, so a task that was claimed in
+// the meantime is left to run instead of being failed underneath its worker.
+func (s *Scheduler) failUnreadyTask(t task.Task, reason string) {
+	now := time.Now()
+	previousStatus, previousToken := t.Status, t.LeaseToken
+	t.Status, t.LastError, t.FinishedAt = task.StatusFailed, reason, &now
+	if updater, ok := s.store.(store.ConditionalUpdater); ok {
+		_ = updater.UpdateIfState(t.ID, previousStatus, previousToken, t)
+		return
+	}
+	_ = s.store.Update(t)
 }
 
 func (s *Scheduler) CompleteTask(workerID, id, token, failure string) error {
@@ -441,6 +502,20 @@ func (s *Scheduler) Cancel(id string) error {
 		atomic.AddUint64(&s.canceled, 1)
 	}
 	return err
+}
+
+// Purge removes a task record entirely. Unlike Cancel it leaves no trace, so it
+// refuses to touch a task that may still be executing: a worker holding the
+// lease would keep running and then fail to complete against a missing record.
+func (s *Scheduler) Purge(id string) error {
+	t, err := s.store.Get(id)
+	if err != nil {
+		return err
+	}
+	if t.Status == task.StatusRunning {
+		return fmt.Errorf("task %s is running: cancel it and wait for the lease to expire first", id)
+	}
+	return s.store.Delete(id)
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -563,9 +638,7 @@ func (s *Scheduler) dispatch() {
 	for _, t := range store.Due(items, time.Now()) {
 		ready, dependencyErr := s.dependenciesReady(t)
 		if dependencyErr != "" {
-			now := time.Now()
-			t.Status, t.LastError, t.FinishedAt = task.StatusFailed, dependencyErr, &now
-			_ = s.store.Update(t)
+			s.failUnreadyTask(t, dependencyErr)
 			continue
 		}
 		if !ready {
@@ -759,11 +832,21 @@ func (s *Scheduler) reapExpired() {
 		expectedToken := t.LeaseToken
 		t.Status, t.RunAt, t.WorkerID, t.LeaseUntil, t.LeaseToken = task.StatusRetrying, now, "", nil, ""
 		t.LastError = "worker lease expired"
+		// The items above are a snapshot taken before this loop started, so the
+		// worker may have completed the task while we were iterating. Writing the
+		// snapshot back unconditionally would overwrite a finished task with
+		// "retrying" and let it run a second time. Guarding the write on "still
+		// running with the same lease token" makes the reap a no-op once the worker
+		// has finished, and counts only a real expiry.
 		if updater, ok := s.store.(store.ConditionalUpdater); ok {
 			if updater.UpdateIfState(t.ID, task.StatusRunning, expectedToken, t) == nil {
 				atomic.AddUint64(&s.leaseExpired, 1)
 			}
 		} else {
+			current, getErr := s.store.Get(t.ID)
+			if getErr != nil || current.Status != task.StatusRunning || current.LeaseToken != expectedToken {
+				continue
+			}
 			if s.store.Update(t) == nil {
 				atomic.AddUint64(&s.leaseExpired, 1)
 			}

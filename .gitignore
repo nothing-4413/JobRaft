@@ -6,6 +6,9 @@
 *.out
 /dist/
 
+# Local benchmark scratch: binaries, captured logs, pid files
+/.local-bench/
+
 # Local persistence written by JOBRAFT_STORE / JOBRAFT_CLUSTER_FILE
 tasks.json
 cluster.json

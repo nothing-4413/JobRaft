@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/nothing-4413/JobRaft/internal/cluster"
@@ -16,6 +17,18 @@ import (
 	"github.com/nothing-4413/JobRaft/internal/store"
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
+
+// taskIDCounter disambiguates tasks created within the same clock tick. A
+// nanosecond timestamp alone collides under concurrent submission: two requests
+// can read the same time.Now() and the second one is rejected as a duplicate ID.
+var taskIDCounter uint64
+
+// newTaskID returns a sortable, collision-resistant identifier for a task the
+// caller did not name. The zero-padded counter keeps IDs created in the same
+// nanosecond lexicographically ordered, so the timestamp prefix still sorts.
+func newTaskID() string {
+	return fmt.Sprintf("task-%d-%06d", time.Now().UnixNano(), atomic.AddUint64(&taskIDCounter, 1)%1_000_000)
+}
 
 type Server struct {
 	scheduler *scheduler.Scheduler
@@ -276,10 +289,21 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ids must be a non-empty array"})
 			return
 		}
+		// purge=true removes the records instead of cancelling them, which is what
+		// benchmark and load-test tooling needs to start from a clean queue. Cancel
+		// stays the default because it is the documented behavior of this endpoint.
+		purge := r.URL.Query().Get("purge") == "true"
 		result := make([]map[string]interface{}, 0, len(req.IDs))
 		for _, id := range req.IDs {
-			err := s.scheduler.Cancel(id)
-			item := map[string]interface{}{"id": id, "canceled": err == nil}
+			var err error
+			item := map[string]interface{}{"id": id}
+			if purge {
+				err = s.scheduler.Purge(id)
+				item["purged"] = err == nil
+			} else {
+				err = s.scheduler.Cancel(id)
+				item["canceled"] = err == nil
+			}
 			if err != nil {
 				item["error"] = err.Error()
 			}
@@ -362,7 +386,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	}
 	t := task.Task{ID: req.ID, IdempotencyKey: idempotencyKey, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
 	if t.ID == "" {
-		t.ID = fmt.Sprintf("task-%d", time.Now().UnixNano())
+		t.ID = newTaskID()
 	}
 	if err := s.scheduler.Submit(t); err != nil {
 		if idempotencyKey != "" && errors.Is(err, store.ErrDuplicateIdempotencyKey) {

@@ -137,6 +137,18 @@ func (s *FileStore) UpdateIfState(id string, status task.Status, token string, t
 	return s.saveLocked()
 }
 
+// Delete removes the task record entirely, unlike Cancel which keeps the task
+// visible in its terminal canceled state.
+func (s *FileStore) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tasks[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.tasks, id)
+	return s.saveLocked()
+}
+
 func (s *FileStore) saveLocked() error {
 	b, err := json.MarshalIndent(s.tasks, "", "  ")
 	if err != nil {

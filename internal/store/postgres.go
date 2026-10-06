@@ -107,6 +107,23 @@ func (s *PostgresStore) Update(t task.Task) error {
 	return requireAffected(result)
 }
 
+// Delete removes the task record entirely, unlike Cancel which keeps the task
+// visible in its terminal canceled state.
+func (s *PostgresStore) Delete(id string) error {
+	result, err := s.db.Exec(`DELETE FROM jobraft_tasks WHERE id = $1`, id)
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 const updateTaskSQL = `UPDATE jobraft_tasks SET idempotency_key = NULLIF($2, ''), name = $3, priority = $4, depends_on = $5, payload = $6, result = $7, status = $8, attempts = $9, max_attempts = $10, retry_backoff_ns = $11, run_at = $12, schedule_ns = $13, run_count = $14, timeout_ns = $15, last_error = $16, created_at = $17, started_at = $18, finished_at = $19, worker_id = $20, lease_until = $21, lease_token = $22 WHERE id = $1`
 
 func (s *PostgresStore) UpdateIfLease(id, token string, t task.Task) error {
