@@ -12,6 +12,35 @@ JobRaft 是一个用 Go 编写的小型工作流/任务调度器，按阶段构�
 
 同样不做的事：通用业务工作流平台、完备的运维控制面、生产级 SLA。本仓库里的性能数字是开发机上可复现的测量结果（见 `docs/benchmark-results.md`），不是容量承诺。
 
+## 亮点速览
+
+- **跨实例原子认领**：一个事务里完成 `FOR UPDATE SKIP LOCKED` 取候选、依赖检查与条件状态写入。
+  10,000 行积压时认领 6.98 ms；同一条 SQL 的 `EXPLAIN (ANALYZE, BUFFERS)` 从 `Sort → Seq Scan`
+  （15.557 ms）变成走 `jobraft_tasks_claim_idx` 的 `Index Scan`（0.109 ms）。
+- **至少一次投递 + 租约恢复**：杀掉正在执行任务的 Worker，租约（默认 3 秒）过期后任务回到 `retrying`
+  并被另一个 Worker 接手；完成路径用 `lease_token` 做条件更新，陈旧 Worker 写不进去。
+- **调度 tick 只读它需要的**：`ListDue` / `ListExpired` 各走一个部分索引，
+  10,000 行表上每 tick 的读取代价从约 136 ms 降到约 5 ms。
+- **可复现，而不是只报最好那一次**：压测工具（`cmd/jobraft-bench`）、逐操作成本测试
+  （`internal/store/postgres_cost_test.go`）与 15 次端到端运行的区间、方差和失败样本都留在仓库里。
+- **CI**：`gofmt`、`go test ./...`、`go test -race ./...`、PostgreSQL 集成与成本测试；
+  测试失败会在 Check 注解里同时点名测试与断言行。
+
+## 拓扑
+
+```mermaid
+flowchart LR
+  C[客户端 / 外部 Worker<br/>pkg/workerclient] -->|POST /tasks<br/>Idempotency-Key| A1[API 实例 1<br/>scheduler + 租约]
+  C -->|POST /workers/id/claim?wait=1s| A2[API 实例 2<br/>scheduler + 租约]
+  A1 <-->|FOR UPDATE SKIP LOCKED<br/>条件更新 + 租约| DB[(PostgreSQL 16<br/>jobraft_tasks / jobraft_workers)]
+  A2 <--> DB
+  A1 -->|/metrics| P[Prometheus]
+  A2 -->|/metrics| P
+  P --> G[Grafana<br/>队列延迟 P95 / 在途 gauge]
+```
+
+两个 API 实例之间没有直接通信：谁来执行一个任务由数据库事务裁决，实例只负责自己的 tick 与本地 handler。
+
 ## 目录结构
 
 | 路径 | 说明 |
