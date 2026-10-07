@@ -88,6 +88,6 @@ GitHub Actions 在每次 push 与 pull request 时执行格式化、测试与完
 
 任务从 `pending` 进入 `running`，再到 `success`。一次失败执行会变为 `retrying`，直到重试预算耗尽，之后变为 `failed`。取消是终态。投递刻意采用至少一次（at-least-once）语义；处理函数应当是幂等的。
 
-存储层是一个接口（`internal/store.Store`），有内存、JSON 文件与 PostgreSQL 三种实现。PostgreSQL 使用事务与 `FOR UPDATE SKIP LOCKED` 实现跨 API 实例的原子认领。默认二进制使用并发安全的内存实现。
+存储层是一个接口（`internal/store.Store`），有内存、JSON 文件与 PostgreSQL 三种实现。PostgreSQL 使用事务与 `FOR UPDATE SKIP LOCKED` 实现跨 API 实例的原子认领；调度器每个 tick 用 `ListDue`/`ListExpired` 走索引只读取「已到期」与「租约已过期」的任务，读取代价不随任务表增长。默认二进制使用并发安全的内存实现。
 
 当 `JOBRAFT_STORE` 指向一个 JSON 文件时，进程停止时仍在运行的任务会在下次启动时被恢复为可重试的任务。

@@ -19,6 +19,13 @@ Both API instances use PostgreSQL as the shared task and worker-lease store.
 `ClaimDue` locks due rows with `FOR UPDATE SKIP LOCKED`, checks dependencies,
 then assigns a random lease token and a deadline in the same transaction.
 
+A scheduler tick asks the store two questions instead of reading the table:
+which tasks are due now (`ListDue`) and which running tasks lost their lease
+(`ListExpired`). Both are index lookups, so the cost of a tick follows the work
+that is actually ready rather than the number of tasks the deployment has ever
+run. Stores that implement only the base `Store` interface still work: the
+scheduler then lists everything and filters in memory.
+
 ## Claim and recovery sequence
 
 ```mermaid
@@ -54,7 +61,9 @@ retries, idempotent submission, Worker leases, PostgreSQL persistence, and
 multi-instance task claiming. Used `FOR UPDATE SKIP LOCKED` plus lease-token
 compare-and-set updates to provide at-least-once delivery and prevent stale
 workers from overwriting task state. Added Docker Compose, Prometheus/Grafana,
-database integration tests, race-test CI, and a repeatable benchmark tool.
+database integration tests, race-test CI, and a repeatable benchmark tool. The
+scheduler tick reads due work and lapsed leases through index-backed queries, so
+its cost does not grow with the size of the task table.
 
 In the local reference runs documented in `docs/benchmark-results.md`, 8 external
 Workers completed 1,000 tasks against PostgreSQL at a median 129 tasks/s

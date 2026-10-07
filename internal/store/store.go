@@ -45,6 +45,21 @@ type InFlightCounter interface {
 	CountInFlight() (int, error)
 }
 
+// TaskScanner answers the two targeted questions a scheduler tick asks: which
+// tasks may run now, and which running tasks lost their lease. A store that can
+// answer them with an index makes the cost of a tick follow the number of
+// matching tasks instead of the size of the whole table, which is what a tick
+// built on Store.List pays. Stores that do not implement this keep working:
+// the scheduler then lists everything and filters in memory.
+//
+// Neither method takes a result limit on purpose. A tick that cannot see every
+// runnable task can starve one that sits behind a long run of tasks it is not
+// able to start yet, and delayed tasks are the point of this scheduler.
+type TaskScanner interface {
+	ListDue(time.Time) ([]task.Task, error)
+	ListExpired(time.Time) ([]task.Task, error)
+}
+
 // Worker is a worker liveness lease. Persistent implementations make workers
 // visible to every API instance behind a load balancer.
 type Worker struct {

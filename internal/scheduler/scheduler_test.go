@@ -70,6 +70,130 @@ func TestDispatchRollbackIsConditional(t *testing.T) {
 	}
 }
 
+// countingStore is a store that reports how often a tick falls back to reading
+// the whole table. It deliberately does not implement store.TaskScanner.
+type countingStore struct {
+	*store.MemoryStore
+	lists int32
+}
+
+func (s *countingStore) List() ([]task.Task, error) {
+	atomic.AddInt32(&s.lists, 1)
+	return s.MemoryStore.List()
+}
+
+// scanningStore implements store.TaskScanner on top of a memory store, so a
+// tick can ask for the due and the lapsed tasks instead of everything.
+type scanningStore struct {
+	*store.MemoryStore
+	lists        int32
+	dueScans     int32
+	expiredScans int32
+}
+
+func (s *scanningStore) List() ([]task.Task, error) {
+	atomic.AddInt32(&s.lists, 1)
+	return s.MemoryStore.List()
+}
+
+func (s *scanningStore) ListDue(now time.Time) ([]task.Task, error) {
+	atomic.AddInt32(&s.dueScans, 1)
+	items, err := s.MemoryStore.List()
+	if err != nil {
+		return nil, err
+	}
+	return store.Due(items, now), nil
+}
+
+func (s *scanningStore) ListExpired(now time.Time) ([]task.Task, error) {
+	atomic.AddInt32(&s.expiredScans, 1)
+	items, err := s.MemoryStore.List()
+	if err != nil {
+		return nil, err
+	}
+	expired := make([]task.Task, 0)
+	for _, t := range items {
+		if t.Status == task.StatusRunning && t.LeaseUntil != nil && !t.LeaseUntil.After(now) {
+			expired = append(expired, t)
+		}
+	}
+	return expired, nil
+}
+
+// seedScanTasks creates one due task and one task whose lease has lapsed, which
+// is everything a single tick has to act on.
+func seedScanTasks(t *testing.T, st store.Store) {
+	t.Helper()
+	now := time.Now()
+	if err := st.Create(task.Task{ID: "scan-due", Name: "demo", Status: task.StatusPending, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	lapsed := now.Add(-time.Minute)
+	// No handler is registered for this name, so the reaped task stays retrying
+	// for the assertions instead of being picked up again by the same tick.
+	if err := st.Create(task.Task{ID: "scan-expired", Name: "unhandled", Status: task.StatusRunning, RunAt: now, CreatedAt: now, LeaseUntil: &lapsed, LeaseToken: "tok-expired", WorkerID: "worker-gone", Retry: task.RetryPolicy{MaxAttempts: 2}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDispatchScansOnlyWhatItNeeds(t *testing.T) {
+	assertReapedAndDispatched := func(t *testing.T, st store.Store) {
+		t.Helper()
+		expired, err := st.Get("scan-expired")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if expired.Status != task.StatusRetrying {
+			t.Fatalf("lapsed lease was not reaped: status = %s, want retrying", expired.Status)
+		}
+		due, err := st.Get("scan-due")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if due.Status != task.StatusRunning {
+			t.Fatalf("due task was not dispatched: status = %s, want running", due.Status)
+		}
+	}
+	newScheduler := func(t *testing.T, st store.Store) *Scheduler {
+		t.Helper()
+		s := New(st, 1)
+		s.SetLeaseTTL(time.Hour)
+		if err := s.Register("demo", func(context.Context, task.Task) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	t.Run("targeted scans", func(t *testing.T) {
+		st := &scanningStore{MemoryStore: store.NewMemory()}
+		seedScanTasks(t, st)
+		newScheduler(t, st).dispatch()
+
+		assertReapedAndDispatched(t, st)
+		if got := atomic.LoadInt32(&st.lists); got != 0 {
+			t.Fatalf("a tick read the whole table %d times, want 0", got)
+		}
+		if got := atomic.LoadInt32(&st.dueScans); got != 1 {
+			t.Fatalf("due scan count = %d, want 1", got)
+		}
+		if got := atomic.LoadInt32(&st.expiredScans); got != 1 {
+			t.Fatalf("expired scan count = %d, want 1", got)
+		}
+	})
+
+	t.Run("stores without the scanner keep working", func(t *testing.T) {
+		st := &countingStore{MemoryStore: store.NewMemory()}
+		seedScanTasks(t, st)
+		newScheduler(t, st).dispatch()
+
+		assertReapedAndDispatched(t, st)
+		// One listing for the lapsed leases and one for the due work.
+		if got := atomic.LoadInt32(&st.lists); got != 2 {
+			t.Fatalf("fallback listing count = %d, want 2", got)
+		}
+	})
+}
+
 func TestSchedulerRetriesAndSucceeds(t *testing.T) {
 	s := New(store.NewMemory(), 1)
 	attempts := 0

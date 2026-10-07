@@ -40,7 +40,7 @@ jobs:
         env:
           JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable
           JOBRAFT_BENCH_CLAIM: '1'
-        run: bash scripts/ci-test.sh go test ./internal/store -run 'TestPostgresOperationCost/(depth1000|dependencies)' -v -count=1
+        run: bash scripts/ci-test.sh go test ./internal/store -run 'TestPostgresOperationCost/(depth1000|mixed-state|dependencies)' -v -count=1
       - name: Race test
         env:
           JOBRAFT_TEST_DATABASE_URL: postgres://jobraft:jobraft@localhost:5432/jobraft?sslmode=disable

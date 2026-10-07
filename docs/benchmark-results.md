@@ -109,3 +109,22 @@ the dependency check issues one `FOR KEY SHARE` query per dependency
 (`internal/store/postgres.go`). `create` and the lease heartbeat stay flat.
 `complete` is the `Get` plus the lease-guarded `Update` a Worker's completion
 performs.
+
+A scheduler tick reads two things: the work that is due, and the running tasks
+whose lease has lapsed. Taking both from a full listing means paying the `list`
+row above twice per tick. `ListDue` and `ListExpired` answer the same two
+questions with an index lookup, measured on a 10,000-row table shaped like a
+deployment that has been up for a while — 9,000 finished tasks, 500 due, 500
+running under a valid lease, 50 lapsed:
+
+| Operation (mean) | 10,000-row table |
+| --- | ---: |
+| `list` (every row) | 48.97 ms |
+| `list-due` (500 due) | 4.04 ms |
+| `list-expired` (50 lapsed) | 1.27 ms |
+
+That is about 98 ms of reads per tick down to about 5 ms, and the smaller number
+is the one that stops growing when the table does. Scheduled work is unaffected:
+a tick still considers every task that has arrived and every lease that lapsed,
+because a limit on either scan could starve a task behind a long run of work
+that is not ready yet.

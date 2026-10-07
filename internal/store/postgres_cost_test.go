@@ -83,6 +83,37 @@ func TestPostgresOperationCost(t *testing.T) {
 		})
 	}
 
+	t.Run("mixed-state", func(t *testing.T) {
+		s := newPostgresTestStore(t)
+		const (
+			finished    = 9000
+			due         = 500
+			running     = 500
+			lapsedCount = 50
+		)
+		now := time.Now().UTC()
+		seedTerminalTasks(t, s, finished)
+		seedDueTasks(t, s, due, "", 0)
+		seedRunningTasks(t, s, "running", running, now.Add(time.Minute))
+		seedRunningTasks(t, s, "lapsed", lapsedCount, now.Add(-time.Minute))
+
+		// What a scheduler tick reads today: everything, then filter in Go.
+		measure(t, "list", listSamples, func() error {
+			_, err := s.List()
+			return err
+		})
+		// What it reads with the targeted scans: the due work and the leases
+		// that actually lapsed.
+		measure(t, "list-due", listSamples, func() error {
+			_, err := s.ListDue(time.Now().UTC())
+			return err
+		})
+		measure(t, "list-expired", listSamples, func() error {
+			_, err := s.ListExpired(time.Now().UTC())
+			return err
+		})
+	})
+
 	t.Run("dependencies", func(t *testing.T) {
 		s := newPostgresTestStore(t)
 		const deps = 5
@@ -126,6 +157,38 @@ func seedDueTasks(t *testing.T, s *PostgresStore, count int, depPrefix string, d
 	}
 	_, err := s.db.Exec(`INSERT INTO jobraft_tasks (id, name, priority, depends_on, status, max_attempts, run_at, created_at, worker_id, lease_token)
 		SELECT 'dep-seed-' || g, 'cost', 0, $1, 'pending', 1, $2, $3, '', '' FROM generate_series(1, $4) AS g`, pq.Array(dependsOn), runAt, now, count)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedTerminalTasks inserts count tasks that already succeeded. Finished work
+// is the bulk of a table a long-running scheduler keeps scanning.
+func seedTerminalTasks(t *testing.T, s *PostgresStore, count int) {
+	t.Helper()
+	if count == 0 {
+		return
+	}
+	runAt := time.Now().UTC().Add(-time.Hour)
+	now := time.Now().UTC()
+	_, err := s.db.Exec(`INSERT INTO jobraft_tasks (id, name, priority, depends_on, status, attempts, max_attempts, run_at, created_at, finished_at, worker_id, lease_token)
+		SELECT 'done-' || g, 'cost', 0, '{}', 'success', 1, 1, $1, $2, $2, '', '' FROM generate_series(1, $3) AS g`, runAt, now, count)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedRunningTasks inserts count running tasks held under the given lease, so a
+// caller can create work whose lease is still valid and work that lapsed.
+func seedRunningTasks(t *testing.T, s *PostgresStore, prefix string, count int, leaseUntil time.Time) {
+	t.Helper()
+	if count == 0 {
+		return
+	}
+	runAt := time.Now().UTC().Add(-time.Minute)
+	now := time.Now().UTC()
+	_, err := s.db.Exec(`INSERT INTO jobraft_tasks (id, name, priority, depends_on, status, attempts, max_attempts, run_at, created_at, worker_id, lease_until, lease_token)
+		SELECT $1 || '-' || g, 'cost', 0, '{}', 'running', 1, 1, $2, $3, 'cost-worker', $4, 'tok-' || g FROM generate_series(1, $5) AS g`, prefix, runAt, now, leaseUntil, count)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS jobraft_tasks (
   lease_until TIMESTAMPTZ, lease_token TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobraft_tasks_due_idx ON jobraft_tasks (status, run_at, priority DESC);
+CREATE INDEX IF NOT EXISTS jobraft_tasks_running_lease_idx ON jobraft_tasks (lease_until) WHERE status = 'running';
 CREATE TABLE IF NOT EXISTS jobraft_workers (
   id TEXT PRIMARY KEY, last_heartbeat TIMESTAMPTZ NOT NULL, lease_until TIMESTAMPTZ NOT NULL
 );
@@ -80,7 +81,26 @@ func (s *PostgresStore) GetByIdempotencyKey(key string) (task.Task, error) {
 }
 
 func (s *PostgresStore) List() ([]task.Task, error) {
-	rows, err := s.db.Query(`SELECT ` + taskSelectColumns + ` FROM jobraft_tasks ORDER BY created_at, id`)
+	return s.queryTasks(`ORDER BY created_at, id`)
+}
+
+// ListDue returns the pending and retrying tasks whose scheduled time has
+// arrived, in the order a scheduler dispatches them. The due index answers this
+// directly, so a queue full of finished or future work costs no more than an
+// empty one.
+func (s *PostgresStore) ListDue(now time.Time) ([]task.Task, error) {
+	return s.queryTasks(`WHERE status IN ('pending', 'retrying') AND run_at <= $1 ORDER BY priority DESC, run_at, id`, now)
+}
+
+// ListExpired returns running tasks whose lease has lapsed: the work a
+// scheduler has to make retryable again. A partial index keeps this
+// proportional to the running tasks rather than to the whole table.
+func (s *PostgresStore) ListExpired(now time.Time) ([]task.Task, error) {
+	return s.queryTasks(`WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= $1 ORDER BY lease_until, id`, now)
+}
+
+func (s *PostgresStore) queryTasks(where string, args ...any) ([]task.Task, error) {
+	rows, err := s.db.Query(`SELECT `+taskSelectColumns+` FROM jobraft_tasks `+where, args...)
 	if err != nil {
 		return nil, err
 	}

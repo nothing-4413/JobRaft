@@ -677,16 +677,42 @@ func (s *Scheduler) loop(ctx context.Context) {
 	}
 }
 
+// dueTasks returns the tasks this tick should consider dispatching. A store
+// that can answer with an index-backed query does, because listing the whole
+// table costs time proportional to the queue on every tick, including all the
+// finished work a running deployment accumulates.
+func (s *Scheduler) dueTasks() ([]task.Task, error) {
+	now := time.Now()
+	if scanner, ok := s.store.(store.TaskScanner); ok {
+		return scanner.ListDue(now)
+	}
+	items, err := s.store.List()
+	if err != nil {
+		return nil, err
+	}
+	return store.Due(items, now), nil
+}
+
+// expiredCandidates feeds reapExpired. Stores that can name the lapsed tasks
+// directly do; the others get a full listing, and reapExpired filters whatever
+// it receives, so both paths reap exactly the same tasks.
+func (s *Scheduler) expiredCandidates() ([]task.Task, error) {
+	if scanner, ok := s.store.(store.TaskScanner); ok {
+		return scanner.ListExpired(time.Now())
+	}
+	return s.store.List()
+}
+
 func (s *Scheduler) dispatch() {
 	if s.leaderGate != nil && !s.leaderGate.IsLeader() {
 		return
 	}
 	s.reapExpired()
-	items, err := s.store.List()
+	items, err := s.dueTasks()
 	if err != nil {
 		return
 	}
-	for _, t := range store.Due(items, time.Now()) {
+	for _, t := range items {
 		ready, dependencyErr := s.dependenciesReady(t)
 		if dependencyErr != "" {
 			s.failUnreadyTask(t, dependencyErr)
@@ -869,7 +895,7 @@ func (s *Scheduler) pickWorker() string {
 }
 
 func (s *Scheduler) reapExpired() {
-	items, err := s.store.List()
+	items, err := s.expiredCandidates()
 	if err != nil {
 		return
 	}

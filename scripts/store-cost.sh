@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Measure what one task costs the PostgreSQL store at different queue depths.
 #
-# docs/benchmark-results.md records 40.67 tasks/s for the Compose stack, which
-# is ~400 ms of wall clock per task across 8 workers. The per-statement
-# measurements in internal/store/postgres_cost_test.go show which store
-# operation carries that cost, and whether it grows with the backlog.
+# The reference runs in docs/benchmark-results.md are dominated by these
+# per-statement costs, and a cost that grows with the queue is invisible until
+# the queue is deep. The mixed-state subtest also times the two reads a
+# scheduler tick performs, against a table that is mostly finished work.
 #
 #   docker compose up -d postgres
 #   scripts/store-cost.sh

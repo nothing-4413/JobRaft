@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,53 @@ func TestPostgresCountInFlight(t *testing.T) {
 	if got != want {
 		t.Fatalf("CountInFlight = %d, want %d", got, want)
 	}
+}
+
+// TestPostgresTargetedScans covers the two index-backed reads a scheduler tick
+// uses instead of listing the table: the work that is due now, and the running
+// tasks whose lease has lapsed.
+func TestPostgresTargetedScans(t *testing.T) {
+	s := newPostgresTestStore(t)
+	now := time.Now().UTC()
+	past, future := now.Add(-time.Minute), now.Add(time.Hour)
+	lapsed, fresh := now.Add(-time.Minute), now.Add(time.Minute)
+	fixtures := []task.Task{
+		{ID: "due-pending", Name: "demo", Status: task.StatusPending, RunAt: past, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}},
+		{ID: "due-retrying", Name: "demo", Priority: 5, Status: task.StatusRetrying, RunAt: past, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 2}},
+		{ID: "future", Name: "demo", Status: task.StatusPending, RunAt: future, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}},
+		{ID: "done", Name: "demo", Status: task.StatusSuccess, RunAt: past, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}},
+		{ID: "running-fresh", Name: "demo", Status: task.StatusRunning, RunAt: past, CreatedAt: now, WorkerID: "worker-a", LeaseUntil: &fresh, LeaseToken: "tok-fresh", Retry: task.RetryPolicy{MaxAttempts: 1}},
+		{ID: "running-lapsed", Name: "demo", Status: task.StatusRunning, RunAt: past, CreatedAt: now, WorkerID: "worker-a", LeaseUntil: &lapsed, LeaseToken: "tok-lapsed", Retry: task.RetryPolicy{MaxAttempts: 1}},
+	}
+	for _, item := range fixtures {
+		if err := s.Create(item); err != nil {
+			t.Fatalf("create %s: %v", item.ID, err)
+		}
+	}
+
+	due, err := s.ListDue(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := taskIDs(due); !slices.Equal(got, []string{"due-retrying", "due-pending"}) {
+		t.Fatalf("ListDue = %v, want [due-retrying due-pending]", got)
+	}
+
+	expired, err := s.ListExpired(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := taskIDs(expired); !slices.Equal(got, []string{"running-lapsed"}) {
+		t.Fatalf("ListExpired = %v, want [running-lapsed]", got)
+	}
+}
+
+func taskIDs(items []task.Task) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
 }
 
 func TestPostgresClaimDueIsAtomic(t *testing.T) {
