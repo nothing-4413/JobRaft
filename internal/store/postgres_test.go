@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,6 +165,60 @@ func TestPostgresClaimFailsDependentTask(t *testing.T) {
 	got, err := s.Get("child")
 	if err != nil || got.Status != task.StatusFailed {
 		t.Fatalf("child = %+v, %v", got, err)
+	}
+}
+
+func TestPostgresClaimWaitsForDependencies(t *testing.T) {
+	s := newPostgresTestStore(t)
+	now := time.Now().UTC()
+	base := func(id string, status task.Status) task.Task {
+		return task.Task{ID: id, Name: "demo", Status: status, Attempts: 1, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}
+	}
+	child := func(id string, deps ...string) task.Task {
+		item := base(id, task.StatusPending)
+		item.DependsOn = deps
+		return item
+	}
+	done := base("dep-a", task.StatusSuccess)
+	done.FinishedAt = &now
+	// dep-b is not due yet, so it is only visible to the dependency check.
+	pending := base("dep-b", task.StatusPending)
+	pending.RunAt = now.Add(time.Hour)
+	// child-missing sorts first, so one claim call has to walk past the missing
+	// dependency, leave the unfinished one alone, and still find ready work.
+	for _, item := range []task.Task{done, pending, child("child-missing", "dep-missing"), child("child-partial", "dep-a", "dep-b"), child("child-ready", "dep-a")} {
+		if err := s.Create(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.RegisterWorker("worker", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := s.ClaimDue("worker", time.Minute)
+	if err != nil || claimed.ID != "child-ready" {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	missing, err := s.Get("child-missing")
+	if err != nil || missing.Status != task.StatusFailed || !strings.Contains(missing.LastError, "dep-missing not found") {
+		t.Fatalf("child-missing = %+v, %v", missing, err)
+	}
+	if _, err := s.ClaimDue("worker", time.Minute); !errors.Is(err, ErrNoTaskAvailable) {
+		t.Fatalf("unfinished dependency claim error = %v", err)
+	}
+	partial, err := s.Get("child-partial")
+	if err != nil || partial.Status != task.StatusPending || partial.LastError != "" {
+		t.Fatalf("child-partial = %+v, %v", partial, err)
+	}
+
+	pending.Status = task.StatusSuccess
+	pending.FinishedAt = &now
+	if err := s.Update(pending); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = s.ClaimDue("worker", time.Minute)
+	if err != nil || claimed.ID != "child-partial" {
+		t.Fatalf("claim after dependency finished = %+v, %v", claimed, err)
 	}
 }
 

@@ -16,9 +16,9 @@ import (
 //
 // It exists because the end-to-end benchmark in docs/benchmark-results.md is
 // dominated by claim cost: every claim locks the worker row, locks up to 64
-// candidate task rows, and runs one extra query per dependency. This test
-// isolates that cost from the HTTP API and the scheduler's dispatch loop, so a
-// regression shows up as a number instead of a hunch.
+// candidate task rows, and locks the whole dependency set of each candidate it
+// walks past. This test isolates that cost from the HTTP API and the scheduler's
+// dispatch loop, so a regression shows up as a number instead of a hunch.
 //
 // It is opt-in because it is a measurement, not a correctness gate, and the
 // sweep is far slower than the rest of the suite:

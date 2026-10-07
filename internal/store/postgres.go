@@ -250,14 +250,38 @@ func (s *PostgresStore) ClaimDue(workerID string, ttl time.Duration) (task.Task,
 }
 
 func dependenciesInTx(tx *sql.Tx, t task.Task) (bool, string, error) {
-	for _, id := range t.DependsOn {
+	if len(t.DependsOn) == 0 {
+		return true, "", nil
+	}
+	// One query for the whole dependency set: a claim is on the hot path, and a
+	// round trip per dependency made a task with five of them cost several
+	// times what the claim itself costs.
+	rows, err := tx.Query(`SELECT id, status FROM jobraft_tasks WHERE id = ANY($1) FOR KEY SHARE`, pq.Array(t.DependsOn))
+	if err != nil {
+		return false, "", err
+	}
+	statuses := make(map[string]task.Status, len(t.DependsOn))
+	for rows.Next() {
+		var id string
 		var status task.Status
-		err := tx.QueryRow(`SELECT status FROM jobraft_tasks WHERE id = $1 FOR KEY SHARE`, id).Scan(&status)
-		if err == sql.ErrNoRows {
-			return false, fmt.Sprintf("dependency %s not found", id), nil
-		}
-		if err != nil {
+		if err := rows.Scan(&id, &status); err != nil {
+			rows.Close()
 			return false, "", err
+		}
+		statuses[id] = status
+	}
+	if err := rows.Close(); err != nil {
+		return false, "", err
+	}
+	if err := rows.Err(); err != nil {
+		return false, "", err
+	}
+	// Report the first problem in the order the task lists its dependencies, so
+	// the error a caller sees does not depend on how the rows came back.
+	for _, id := range t.DependsOn {
+		status, ok := statuses[id]
+		if !ok {
+			return false, fmt.Sprintf("dependency %s not found", id), nil
 		}
 		if status == task.StatusFailed || status == task.StatusCanceled {
 			return false, fmt.Sprintf("dependency %s did not succeed", id), nil

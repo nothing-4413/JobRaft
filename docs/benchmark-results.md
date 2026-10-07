@@ -99,16 +99,20 @@ go test ./internal/store -run TestPostgresOperationCost -v -count=1
 | `heartbeat + renew` | 4.23 ms | 3.87 ms | 4.61 ms |
 | `claim` (`FOR UPDATE SKIP LOCKED`) | 5.80 ms | 7.74 ms | 34.08 ms |
 | `complete` | – | 12.34 ms | 42.16 ms |
-| `claim` with 5 dependencies | – | 14.20 ms | – |
+| `claim` with 5 dependencies | – | 12.40 ms | – |
 
 Measured on the same machine from the Windows host against the published
 Postgres port, so every round trip carries the port-forward cost and these are
 upper bounds for an in-network run. `claim` and `complete` grow with the queue
-depth because a claim locks up to 64 candidate rows and returns one, and because
-the dependency check issues one `FOR KEY SHARE` query per dependency
+depth because a claim locks up to 64 candidate rows and returns one
 (`internal/store/postgres.go`). `create` and the lease heartbeat stay flat.
 `complete` is the `Get` plus the lease-guarded `Update` a Worker's completion
 performs.
+
+The five-dependency claim locks the whole dependency set in a single
+`FOR KEY SHARE` query. Checking one dependency at a time cost 14.20 ms for the
+same task, so a task that waits on four other steps paid several extra round
+trips on every claim attempt.
 
 A scheduler tick reads two things: the work that is due, and the running tasks
 whose lease has lapsed. Taking both from a full listing means paying the `list`
