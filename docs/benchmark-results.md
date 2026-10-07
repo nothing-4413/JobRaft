@@ -19,7 +19,7 @@ claims, and completions alternate between `http://localhost:8080` and
 `http://localhost:8081`. The Compose profile sets `JOBRAFT_MAX_PENDING=10000`
 for the 1,000-task sample while retaining the binary's protective default.
 
-### B. Host-native API instances (used for the 2026-10-07 row)
+### B. Host-native API instances (used for both 2026-10-07 rows)
 
 Building the image needs `golang:1.22-alpine` and `alpine:3.20` from Docker Hub;
 when the registry is unreachable the two API instances can run straight from the
@@ -64,7 +64,7 @@ Two properties of the harness matter for reading these numbers:
 | 2026-10-07 | Lenovo 83DF, Intel i9-14900HX, 32 logical CPUs, 32 GB RAM; Docker Desktop 29.7.2 + PostgreSQL 16-alpine | 1,000 | 8 | 16 | two host-native instances, fresh store, median of 5 runs | 7.75 s | 129.0 tasks/s | mean 3.0 s, P95 ≤ 10 s |
 | 2026-10-07 | same machine, after the store work (`ListDue` scans, claim index, batched dependency check) | 1,000 | 8 | 16 | two host-native instances, fresh store, median of 5 runs | 7.63 s | 131.1 tasks/s | mean 3.1 s, P95 ≤ 10 s |
 
-The 2026-10-07 row: five consecutive runs, each starting from an empty store.
+The first 2026-10-07 row: five consecutive runs, each starting from an empty store.
 Every run completed all 1,000 tasks with zero failed, retried, or expired
 leases, 1,000 unique completion IDs and no duplicate completions. Throughput
 ranged 118.2–139.4 tasks/s (mean 129.5); the submit phase took 1.10–1.48 s
