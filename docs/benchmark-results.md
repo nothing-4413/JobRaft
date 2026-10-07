@@ -50,7 +50,11 @@ Two properties of the harness matter for reading these numbers:
   per host) a few thousand requests close nearly every connection and fill the
   host's ephemeral ports with `TIME_WAIT` entries. That inflates latency and,
   once the port range is full, fails the run with `only one usage of each socket
-  address` before it starts.
+  address` before it starts. On Windows the same exhaustion also hits the API
+  instances' own PostgreSQL connections, which then surface inside API responses
+  as a `dial tcp [::1]:15432: connectex: Only one usage of each socket address`
+  body on a 404 or 409. Failed attempts leave rows behind, so a retried sample
+  reports an inflated latency counter.
 
 ## Record
 
@@ -58,6 +62,7 @@ Two properties of the harness matter for reading these numbers:
 | --- | --- | ---: | ---: | ---: | --- | --- | ---: | ---: |
 | 2026-09-23 | Lenovo 83DF, Intel i9-14900HX, 32 logical CPUs, 32 GB RAM; Docker Desktop + PostgreSQL 16 | 1,000 | 8 | 16 | Compose, two instances | 24.587 s | 40.67 tasks/s | P95 14.70 s |
 | 2026-10-07 | Lenovo 83DF, Intel i9-14900HX, 32 logical CPUs, 32 GB RAM; Docker Desktop 29.7.2 + PostgreSQL 16-alpine | 1,000 | 8 | 16 | two host-native instances, fresh store, median of 5 runs | 7.75 s | 129.0 tasks/s | mean 3.0 s, P95 ≤ 10 s |
+| 2026-10-07 | same machine, after the store work (`ListDue` scans, claim index, batched dependency check) | 1,000 | 8 | 16 | two host-native instances, fresh store, median of 5 runs | 7.63 s | 131.1 tasks/s | mean 3.1 s, P95 ≤ 10 s |
 
 The 2026-10-07 row: five consecutive runs, each starting from an empty store.
 Every run completed all 1,000 tasks with zero failed, retried, or expired
@@ -69,6 +74,20 @@ Mean queue latency ranged 2.88–3.52 s. Queue latency was read as the
 precision is limited by the bucket bounds (5 s and 10 s); the 95th percentile
 landed above 5 s in three runs and at or below 5 s in two. These are
 development-laptop figures, not a capacity guarantee.
+
+The third row repeats that measurement after the store-level work and lands in
+the same place: throughput ranged 121.7–157.9 tasks/s (median 131.1, mean 136.0),
+submit 0.97–1.59 s, end-to-end 6.33–8.22 s, mean queue latency 2.4–3.6 s, P95 at
+or below 5 s in three runs and below 10 s in two. Across all fifteen runs on this
+host the medians sit between 129 and 156 tasks/s (overall median 137, range
+118–167), so run-to-run variance of roughly ±10–20 % is wider than the effect of
+that work. The claim index and the targeted tick scans are visible in the store
+table below (`claim` at depth 10,000 fell from 34.08 ms to 6.98 ms), not at this
+granularity: the end-to-end run is dominated by HTTP round trips and lease
+bookkeeping, and 8 Workers across two instances leave the database far from
+saturated. Both batches are also honest about a host artifact: some samples needed
+retries because the ephemeral port range was full, and those attempts left rows
+behind (a retried sample reported 2,339 latency observations for 1,000 tasks).
 
 The 2026-09-23 row predates the harness fixes above: its total includes deleting
 the previous run's `benchmark` rows, so it is not comparable with the newer row

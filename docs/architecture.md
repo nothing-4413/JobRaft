@@ -67,5 +67,8 @@ a claim walks the backlog in priority order through a matching partial index, so
 neither cost grows with the size of the task table.
 
 In the local reference runs documented in `docs/benchmark-results.md`, 8 external
-Workers completed 1,000 tasks against PostgreSQL at a median 129 tasks/s
-(118-139 tasks/s over five runs) with a mean queue latency of about 3 seconds.
+Workers completed 1,000 tasks against PostgreSQL at a median of about 130 tasks/s
+across five runs, with a mean queue latency of about 3 seconds. Repeated batches
+on the same host landed between 129 and 156 tasks/s (overall median 137 over
+fifteen runs), so run-to-run variance is wider than the effect of the store-level
+work; the cost of that work is reported separately, per store operation.
