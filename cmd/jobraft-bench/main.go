@@ -42,13 +42,27 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	client := &http.Client{Timeout: 15 * time.Second}
-	start := time.Now()
+	// Reuse connections. The default idle pool keeps only two per host, so a run
+	// of a few thousand requests closes nearly every connection and parks the
+	// host's ephemeral ports in TIME_WAIT. That both skews the measured latency
+	// and, once the local port range fills up, makes back-to-back runs fail with
+	// "only one usage of each socket address".
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 256
+	client := &http.Client{Timeout: 15 * time.Second, Transport: transport}
+	// Cleanup deletes rows an earlier run left behind. That work scales with the
+	// leftovers, not with this run, so it stays outside the measured window and
+	// is reported on its own: counting it made a run that started on a populated
+	// store look several times slower than the same run on an empty one.
+	cleanupStart := time.Now()
 	for _, endpoint := range endpoints {
 		if err := cleanupBenchmarkTasks(ctx, client, endpoint, token); err != nil {
 			fatal(err)
 		}
 	}
+	cleanupDuration := time.Since(cleanupStart)
+	start := time.Now()
 	if err := submit(ctx, client, endpoints, token, total, submitParallelism); err != nil {
 		fatal(err)
 	}
@@ -86,7 +100,7 @@ func main() {
 	}
 	elapsed := time.Since(start)
 	reportDuplicateCompletions()
-	fmt.Printf("submitted=%d submit_duration=%s completed=%d elapsed=%s throughput=%.2f tasks/s\n", total, submitFinished.Sub(start).Round(time.Millisecond), completed, elapsed.Round(time.Millisecond), float64(total)/elapsed.Seconds())
+	fmt.Printf("cleanup_duration=%s submitted=%d submit_duration=%s completed=%d elapsed=%s throughput=%.2f tasks/s\n", cleanupDuration.Round(time.Millisecond), total, submitFinished.Sub(start).Round(time.Millisecond), completed, elapsed.Round(time.Millisecond), float64(total)/elapsed.Seconds())
 	for _, endpoint := range endpoints {
 		if metrics, err := get(ctx, client, endpoint+"/metrics", token); err == nil {
 			fmt.Printf("metrics[%s]:\n%s", endpoint, metrics)

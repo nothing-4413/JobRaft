@@ -56,6 +56,6 @@ compare-and-set updates to provide at-least-once delivery and prevent stale
 workers from overwriting task state. Added Docker Compose, Prometheus/Grafana,
 database integration tests, race-test CI, and a repeatable benchmark tool.
 
-In the local Docker Compose reference run documented in
-`docs/benchmark-results.md`, 8 external Workers completed 1,000 tasks at
-40.67 tasks/s with a Prometheus P95 queue latency of 14.70 seconds.
+In the local reference runs documented in `docs/benchmark-results.md`, 8 external
+Workers completed 1,000 tasks against PostgreSQL at a median 129 tasks/s
+(118-139 tasks/s over five runs) with a mean queue latency of about 3 seconds.

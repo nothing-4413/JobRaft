@@ -21,9 +21,14 @@ go run ./cmd/jobraft-bench -tasks 1000 -workers 8 -submit-parallelism 16
 
 ## 流程
 
-1. 清理首个端点上残留的 `benchmark` 任务。
+1. 清理各端点上残留的 `benchmark` 任务；这段耗时单独记为 `cleanup_duration`，不计入测量窗口。
 2. 按轮询顺序跨所有端点提交任务（name 为 `benchmark`）。
 3. 运行外部 Worker，跨端点完成 register、heartbeat、长轮询 claim，然后 complete。
-4. 打印提交/耗时、吞吐，以及每个端点的 `/metrics`。
+4. 打印 `cleanup_duration`、提交/耗时、吞吐，以及每个端点的 `/metrics`。
+
+## 测量口径
+
+- `submit_duration` 与 `elapsed`（吞吐的分母）只覆盖提交与执行阶段。清理代价只取决于上一次运行残留的行数（每行约 4 ms），与本次运行无关；把它算进去会让一个从非空队列起步的运行看起来慢好几倍。
+- 客户端复用 HTTP 连接（`MaxIdleConnsPerHost = 256`）。Go 默认每个主机只保留 2 个空闲连接，数千次请求会不断关闭连接并把宿主机临时端口堆满 `TIME_WAIT`：这既抬高延迟，也会让后续运行以 `only one usage of each socket address` 直接失败。
 
 参考运行记录及复现方法见 [`docs/benchmark-results.md`](../../docs/benchmark-results.md)。
