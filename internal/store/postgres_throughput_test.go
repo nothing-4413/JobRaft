@@ -65,7 +65,7 @@ func TestPostgresClaimThroughput(t *testing.T) {
 						results <- result{workerID: workerID, err: err}
 						return
 					}
-					claimed := 0
+					claimed, empty := 0, 0
 					for {
 						// Mirror the benchmark worker loop: heartbeat, then claim,
 						// then complete with the lease token.
@@ -76,14 +76,22 @@ func TestPostgresClaimThroughput(t *testing.T) {
 						atomic.AddInt64(&heartbeat, 1)
 						item, err := s.ClaimDue(workerID, lease)
 						if err == ErrNoTaskAvailable {
-							results <- result{workerID: workerID, claimed: claimed}
-							return
+							// An empty result can mean the queue is drained, or
+							// just that another transaction still holds the rows
+							// it walked. Retry before concluding the queue is empty.
+							if empty++; empty >= 3 {
+								results <- result{workerID: workerID, claimed: claimed}
+								return
+							}
+							time.Sleep(time.Millisecond)
+							continue
 						}
 						if err != nil {
 							results <- result{workerID: workerID, claimed: claimed, err: err}
 							return
 						}
 						claimed++
+						empty = 0
 						item.Status = task.StatusSuccess
 						finished := time.Now().UTC()
 						item.FinishedAt = &finished

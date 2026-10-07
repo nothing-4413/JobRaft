@@ -112,33 +112,54 @@ func TestPostgresClaimDueIsAtomic(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	claimed, errs := make(chan task.Task, 2), make(chan error, 2)
-	var wg sync.WaitGroup
-	for _, workerID := range []string{"worker-a", "worker-b"} {
-		workerID := workerID
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			item, err := s.ClaimDue(workerID, time.Minute)
-			if err != nil {
-				errs <- err
-				return
-			}
-			claimed <- item
-		}()
-	}
-	wg.Wait()
-	close(claimed)
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
-	}
-	seen := make(map[string]bool)
-	for item := range claimed {
-		if item.LeaseToken == "" || seen[item.ID] {
-			t.Fatalf("duplicate or invalid claim: %+v", item)
+	// The candidate query locks every due row it walks, so two claims that
+	// overlap can leave the second worker with nothing: SKIP LOCKED skips the
+	// rows the first transaction has not committed yet. That is normal
+	// contention and the benchmark worker loop retries it, so this test does
+	// too. The property under test is that a task is never handed out twice,
+	// not that both workers win in the same instant. A probe with two due
+	// tasks and two simultaneous claims saw one claim come back empty in 49 of
+	// 50 rounds, so the old single-shot version failed whenever the goroutines
+	// happened to overlap. (With a deep backlog there are always rows left
+	// over, which is why the throughput tests rarely notice.)
+	seen := make(map[string]bool, 2)
+	deadline := time.Now().Add(10 * time.Second)
+	for len(seen) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("claimed %v, want two distinct tasks", seen)
 		}
-		seen[item.ID] = true
+		claimed, errs := make(chan task.Task, 2), make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, workerID := range []string{"worker-a", "worker-b"} {
+			workerID := workerID
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				item, err := s.ClaimDue(workerID, time.Minute)
+				if err != nil {
+					errs <- err
+					return
+				}
+				claimed <- item
+			}()
+		}
+		wg.Wait()
+		close(claimed)
+		close(errs)
+		for err := range errs {
+			if !errors.Is(err, ErrNoTaskAvailable) {
+				t.Fatal(err)
+			}
+		}
+		for item := range claimed {
+			if item.LeaseToken == "" || seen[item.ID] {
+				t.Fatalf("duplicate or invalid claim: %+v", item)
+			}
+			seen[item.ID] = true
+		}
+		if len(seen) < 2 {
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 	if len(seen) != 2 {
 		t.Fatalf("expected two unique claims, got %v", seen)

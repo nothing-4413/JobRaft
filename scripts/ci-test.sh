@@ -16,7 +16,11 @@ trap 'rm -f "$log"' EXIT
 status=$?
 
 if [ "$status" -ne 0 ]; then
-  grep -nE '^(--- FAIL|FAIL|ok  |panic:|fatal error:|WARNING: DATA RACE)' "$log" | head -10 |
+  # A failing test prints "--- FAIL: TestX" and then an indented
+  # "<file>_test.go:<line>: <message>" line. Without that second line the
+  # annotation names the test but not the assertion, which leaves the failure
+  # half-diagnosed.
+  grep -nE '^(--- FAIL|FAIL|ok  |panic:|fatal error:|WARNING: DATA RACE)|_test\.go:[0-9]+:' "$log" | head -12 |
     while IFS= read -r line; do
       echo "::error title=go test failure::$line"
     done
