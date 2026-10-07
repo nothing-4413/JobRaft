@@ -28,16 +28,9 @@ type Metrics struct {
 
 var queueLatencyBounds = [...]float64{0.1, 1, 5, 10, 15, 30, 60}
 
-// taskIDCounter disambiguates tasks created within the same clock tick. A
-// nanosecond timestamp alone collides under concurrent submission: two callers
-// can read the same time.Now() and the second task is rejected as a duplicate.
-var taskIDCounter uint64
-
-// newTaskID mirrors the API layer's generator so in-process submissions stay
-// sortable and collision-resistant without going through the HTTP handler.
-func newTaskID() string {
-	return fmt.Sprintf("task-%d-%06d", time.Now().UnixNano(), atomic.AddUint64(&taskIDCounter, 1)%1_000_000)
-}
+// task.NewID names tasks submitted in process. It carries a per-process tag,
+// so ids stay distinct from the API layer's and from another instance sharing
+// the same store.
 
 type Scheduler struct {
 	store                                           store.Store
@@ -189,7 +182,7 @@ func (s *Scheduler) Submit(t task.Task) error {
 		}
 	}
 	if t.ID == "" {
-		t.ID = newTaskID()
+		t.ID = task.NewID()
 	}
 	if t.RunAt.IsZero() {
 		t.RunAt = time.Now()

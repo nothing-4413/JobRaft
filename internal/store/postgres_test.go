@@ -246,3 +246,19 @@ func TestPostgresDeleteRemovesRecord(t *testing.T) {
 		t.Fatalf("unrelated task was lost: %v", err)
 	}
 }
+
+func TestPostgresCreateRejectsDuplicateID(t *testing.T) {
+	s := newPostgresTestStore(t)
+	now := time.Now().UTC()
+	item := task.Task{ID: "dup-id", Name: "demo", Status: task.StatusPending, RunAt: now, CreatedAt: now, Retry: task.RetryPolicy{MaxAttempts: 1}}
+	if err := s.Create(item); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Create(item)
+	if !errors.Is(err, ErrDuplicateID) {
+		t.Fatalf("second create with the same id = %v, want ErrDuplicateID", err)
+	}
+	if errors.Is(err, ErrConflict) {
+		t.Fatalf("a duplicate id must not be reported as a stale read: %v", err)
+	}
+}

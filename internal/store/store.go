@@ -12,6 +12,7 @@ import (
 var ErrNotFound = errors.New("task not found")
 var ErrConflict = errors.New("task changed since it was read")
 var ErrDuplicateIdempotencyKey = errors.New("idempotency key already exists")
+var ErrDuplicateID = errors.New("task id already exists")
 var ErrNoTaskAvailable = errors.New("no task available")
 
 // Store persists task metadata. Implementations must be safe for concurrent use.
@@ -101,7 +102,7 @@ func (s *MemoryStore) Create(t task.Task) error {
 		}
 	}
 	if _, ok := s.tasks[t.ID]; ok {
-		return errors.New("task already exists")
+		return ErrDuplicateID
 	}
 	s.tasks[t.ID] = clone(t)
 	return nil

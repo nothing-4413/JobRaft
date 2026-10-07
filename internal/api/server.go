@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/nothing-4413/JobRaft/internal/cluster"
@@ -18,17 +17,8 @@ import (
 	"github.com/nothing-4413/JobRaft/internal/task"
 )
 
-// taskIDCounter disambiguates tasks created within the same clock tick. A
-// nanosecond timestamp alone collides under concurrent submission: two requests
-// can read the same time.Now() and the second one is rejected as a duplicate ID.
-var taskIDCounter uint64
-
-// newTaskID returns a sortable, collision-resistant identifier for a task the
-// caller did not name. The zero-padded counter keeps IDs created in the same
-// nanosecond lexicographically ordered, so the timestamp prefix still sorts.
-func newTaskID() string {
-	return fmt.Sprintf("task-%d-%06d", time.Now().UnixNano(), atomic.AddUint64(&taskIDCounter, 1)%1_000_000)
-}
+// task.NewID names tasks the caller did not name. The generator carries a
+// per-process tag because two API instances can share one task table.
 
 type Server struct {
 	scheduler *scheduler.Scheduler
@@ -414,7 +404,7 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	}
 	t := task.Task{ID: req.ID, IdempotencyKey: idempotencyKey, Name: req.Name, Priority: req.Priority, DependsOn: req.DependsOn, Payload: append([]byte(nil), req.Payload...), RunAt: runAt, Timeout: req.Timeout, Schedule: req.Schedule, Retry: req.Retry}
 	if t.ID == "" {
-		t.ID = newTaskID()
+		t.ID = task.NewID()
 	}
 	if err := s.scheduler.Submit(t); err != nil {
 		if idempotencyKey != "" && errors.Is(err, store.ErrDuplicateIdempotencyKey) {
@@ -425,6 +415,12 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == scheduler.ErrBackpressure {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, store.ErrDuplicateID) {
+			// The id the client pinned is taken. That is a conflict, not a
+			// malformed request.
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

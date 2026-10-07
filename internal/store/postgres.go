@@ -421,8 +421,13 @@ func mapPostgresError(err error) error {
 		return nil
 	}
 	if pg, ok := err.(*pq.Error); ok && pg.Code == "23505" {
-		if pg.Constraint == "jobraft_tasks_idempotency_key_key" {
+		switch pg.Constraint {
+		case "jobraft_tasks_idempotency_key_key":
 			return ErrDuplicateIdempotencyKey
+		case "jobraft_tasks_pkey":
+			// A create collided with an existing id. Reporting this as a
+			// conflict would claim the caller lost a race it never entered.
+			return ErrDuplicateID
 		}
 		return ErrConflict
 	}
