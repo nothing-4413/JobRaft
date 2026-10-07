@@ -93,21 +93,55 @@ go test ./internal/store -run TestPostgresOperationCost -v -count=1
 
 | Operation (mean) | depth 0 | depth 1,000 | depth 10,000 |
 | --- | ---: | ---: | ---: |
-| `list` (20 samples) | 0.42 ms | 3.64 ms | 49.83 ms |
-| `count-in-flight` | 0.36 ms | 0.61 ms | 1.24 ms |
-| `create` | 3.37 ms | 3.22 ms | 3.36 ms |
-| `heartbeat + renew` | 4.23 ms | 3.87 ms | 4.61 ms |
-| `claim` (`FOR UPDATE SKIP LOCKED`) | 5.80 ms | 7.74 ms | 34.08 ms |
-| `complete` | – | 12.34 ms | 42.16 ms |
-| `claim` with 5 dependencies | – | 12.40 ms | – |
+| `list` (20 samples) | 0.51 ms | 20.19 ms¹ | 63.20 ms |
+| `count-in-flight` | 0.45 ms | 0.49 ms | 1.84 ms |
+| `create` | 3.68 ms | 3.71 ms | 3.84 ms |
+| `heartbeat + renew` | 4.12 ms | 4.08 ms | 4.87 ms |
+| `claim` (`FOR UPDATE SKIP LOCKED`) | 5.56 ms | 5.67 ms | 6.98 ms |
+| `complete` (claim + complete) | – | 9.70 ms | 10.69 ms |
+| `claim` with 5 dependencies | – | 10.41 ms | – |
 
-Measured on the same machine from the Windows host against the published
-Postgres port, so every round trip carries the port-forward cost and these are
-upper bounds for an in-network run. `claim` and `complete` grow with the queue
-depth because a claim locks up to 64 candidate rows and returns one
-(`internal/store/postgres.go`). `create` and the lease heartbeat stay flat.
-`complete` is the `Get` plus the lease-guarded `Update` a Worker's completion
-performs.
+¹ One of the 20 `list` samples at depth 1,000 took 308 ms, which pulls the mean
+up; its p50 is 5.47 ms.
+
+Measured in one run on the same machine from the Windows host against the
+published Postgres port, so every round trip carries the port-forward cost and
+these are upper bounds for an in-network run. `create` and the lease heartbeat
+stay flat with depth. `complete` includes the `claim` that has to find the task
+first, which is why it tracks the `claim` row.
+
+### Why a claim does not get slower
+
+A claim asks for the due tasks in priority order and stops as soon as it has its
+batch of candidates, so it needs an index that is already in that order.
+`jobraft_tasks_due_idx` leads with `status`, so the planner cannot use it for
+`ORDER BY priority DESC, run_at, id` and sorted the entire due set on every
+claim instead:
+
+```
+Limit  (actual time=15.420..15.452 rows=64)
+  ->  LockRows
+        ->  Sort  (Sort Key: priority DESC, run_at, id)
+              Sort Method: quicksort  Memory: 1010kB
+              ->  Seq Scan on jobraft_tasks  (rows=10000)
+Execution Time: 15.557 ms
+```
+
+`jobraft_tasks_claim_idx` puts the claim order first and carries the claimable
+statuses as its predicate, so the same query on the same 10,000-row backlog walks
+the index and stops after 64 rows:
+
+```
+Limit  (actual time=0.036..0.084 rows=64)
+  ->  LockRows
+        ->  Index Scan using jobraft_tasks_claim_idx  (rows=64)
+              Index Cond: (run_at <= now())
+Execution Time: 0.109 ms
+```
+
+That is the difference between a claim that costs 34.08 ms on a 10,000-row
+backlog and one that costs 6.98 ms, within noise of the 5.56 ms it costs on an
+empty queue. Both plans come from `EXPLAIN (ANALYZE, BUFFERS)` on the same host.
 
 The five-dependency claim locks the whole dependency set in a single
 `FOR KEY SHARE` query. Checking one dependency at a time cost 14.20 ms for the
@@ -123,12 +157,12 @@ running under a valid lease, 50 lapsed:
 
 | Operation (mean) | 10,000-row table |
 | --- | ---: |
-| `list` (every row) | 48.97 ms |
-| `list-due` (500 due) | 4.04 ms |
-| `list-expired` (50 lapsed) | 1.27 ms |
+| `list` (every row) | 67.91 ms |
+| `list-due` (500 due) | 3.54 ms |
+| `list-expired` (50 lapsed) | 1.16 ms |
 
-That is about 98 ms of reads per tick down to about 5 ms, and the smaller number
-is the one that stops growing when the table does. Scheduled work is unaffected:
-a tick still considers every task that has arrived and every lease that lapsed,
-because a limit on either scan could starve a task behind a long run of work
-that is not ready yet.
+That is about 136 ms of reads per tick down to about 5 ms, and the smaller
+number is the one that stops growing when the table does. Scheduled work is
+unaffected: a tick still considers every task that has arrived and every lease
+that lapsed, because a limit on either scan could starve a task behind a long run
+of work that is not ready yet.

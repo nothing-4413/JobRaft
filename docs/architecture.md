@@ -62,8 +62,9 @@ multi-instance task claiming. Used `FOR UPDATE SKIP LOCKED` plus lease-token
 compare-and-set updates to provide at-least-once delivery and prevent stale
 workers from overwriting task state. Added Docker Compose, Prometheus/Grafana,
 database integration tests, race-test CI, and a repeatable benchmark tool. The
-scheduler tick reads due work and lapsed leases through index-backed queries, so
-its cost does not grow with the size of the task table.
+scheduler tick reads due work and lapsed leases through index-backed queries, and
+a claim walks the backlog in priority order through a matching partial index, so
+neither cost grows with the size of the task table.
 
 In the local reference runs documented in `docs/benchmark-results.md`, 8 external
 Workers completed 1,000 tasks against PostgreSQL at a median 129 tasks/s
