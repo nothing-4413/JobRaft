@@ -4,6 +4,14 @@ JobRaft 是一个用 Go 编写的小型工作流/任务调度器，按阶段构�
 
 项目刻意聚焦于调度正确性、投递语义、租约、持久化与协调。它不打算成为通用业务平台或功能繁重的前端；这些关注点保持在核心之外，使实现保持为一个有价值的技术系统项目。
 
+## 范围与边界
+
+名字里的 "Raft" 指的是设计取向，不是一项声明。`internal/cluster` 中的 `ConsensusGroup` 与内嵌复制日志只服务于确定性测试与本地集成：它没有网络传输层，也不声称在真实网络上等价于完整 Raft。`ReplicatedLog` 接口就是将来接入该传输层的边界。
+
+多个 API 实例之间的一致性边界是 PostgreSQL，而不是共识协议：用 `FOR UPDATE SKIP LOCKED` 在一个事务里原子认领、用租约令牌做条件更新、用唯一幂等键去重。也就是说「哪个实例执行哪个任务」由数据库事务裁决。
+
+同样不做的事：通用业务工作流平台、完备的运维控制面、生产级 SLA。本仓库里的性能数字是开发机上可复现的测量结果（见 `docs/benchmark-results.md`），不是容量承诺。
+
 ## 目录结构
 
 | 路径 | 说明 |
@@ -78,7 +86,7 @@ curl -X POST http://localhost:8080/tasks \
 要复现双实例 PostgreSQL 部署，运行 `docker compose up --build`。运维假设与故障注入检查见 `docs/operations.md`。
 该栈在 `8080` 与 `8081` 端口暴露 API 实例，Prometheus 在 `9090`，Grafana 在 `3000`（本地使用 `admin` / `local-dev-password`）。
 栈就绪后运行 `go run ./cmd/jobraft-bench` 执行 `docs/benchmark-results.md` 中记录的跨实例压测。
-架构、故障语义与面试向项目说明见 `docs/architecture.md`。
+架构、故障语义与面试向项目说明见 `docs/architecture.md`；5 分钟演示脚本见 `docs/demo.md`，常见追问与取舍见 `docs/interview.md`。
 
 对已部署实例，设置 `JOBRAFT_API_TOKEN` 并发送 `Authorization: Bearer <token>` 或 `X-API-Key: <token>`。空 token 模式仅用于本地开发。
 
